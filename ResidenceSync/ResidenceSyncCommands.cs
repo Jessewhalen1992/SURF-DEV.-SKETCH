@@ -7,20 +7,22 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
+using Autodesk.AutoCAD.ApplicationServices.Core;
+using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+
 
 namespace ResidenceSync
 {
-    [CommandClass(typeof(ResidenceSyncCommands))]
     public class ResidenceSyncCommands
     {
-        private const string MASTER_PATH = @"C:\\_CG_SHARED\\Master_Residences.dwg";
+        private const string MASTER_PATH = @"C:\_CG_SHARED\Master_Residences.dwg";
         private const string RESIDENCE_LAYER = "Z-RESIDENCE";
         private const double LENGTH_TOLERANCE = 1e-9;
 
         [CommandMethod("ResidenceSync", "PUSHRES", CommandFlags.Modal)]
         public void PushResidences()
         {
-            Document doc = Application.DocumentManager.MdiActiveDocument;
+            Document doc = AcadApp.DocumentManager.MdiActiveDocument;
             if (doc == null)
             {
                 return;
@@ -107,7 +109,7 @@ namespace ResidenceSync
         [CommandMethod("ResidenceSync", "PULLRES", CommandFlags.Modal)]
         public void PullResidences()
         {
-            Document doc = Application.DocumentManager.MdiActiveDocument;
+            Document doc = AcadApp.DocumentManager.MdiActiveDocument;
             if (doc == null)
             {
                 return;
@@ -191,14 +193,25 @@ namespace ResidenceSync
                         modelSpace.AppendEntity(dbPoint);
                         tr.AddNewlyCreatedDBObject(dbPoint, true);
                     }
-
+                    EnsurePointStyleVisible();
                     tr.Commit();
                 }
             }
 
             ed.WriteMessage($"\nPULLRES: Inserted {sketchPoints.Count} residence point(s) into this sketch for {sectionKey}.");
         }
-
+        private static void EnsurePointStyleVisible()
+        {
+            try
+            {
+                AcadApp.SetSystemVariable("PDMODE", 3);
+                AcadApp.SetSystemVariable("PDSIZE", 0.8);
+            }
+            catch
+            {
+                // ignore if system vars are locked
+            }
+        }
         private bool PromptSectionKey(Editor ed, out SectionKey key)
         {
             key = default;
@@ -433,26 +446,28 @@ namespace ResidenceSync
             int appended = 0;
             using (Database masterDb = new Database(false, true))
             {
-                masterDb.ReadDwgFile(MASTER_PATH, FileShare.ReadWrite, false, null);
+                masterDb.ReadDwgFile(MASTER_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
                 masterDb.CloseInput(true);
 
                 using (Transaction tr = masterDb.TransactionManager.StartTransaction())
                 {
                     EnsureLayer(masterDb, RESIDENCE_LAYER, tr);
+                    // Resolve the layer ObjectId once, then reuse
+                    LayerTable lt = (LayerTable)tr.GetObject(masterDb.LayerTableId, OpenMode.ForRead);
+                    ObjectId resLayerId = lt[RESIDENCE_LAYER];
 
                     BlockTable bt = (BlockTable)tr.GetObject(masterDb.BlockTableId, OpenMode.ForRead);
                     BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
                     foreach (Point3d point in pointList)
                     {
-                        DBPoint dbPoint = new DBPoint(point)
-                        {
-                            Layer = RESIDENCE_LAYER
-                        };
+                        DBPoint dbPoint = new DBPoint(point);
+                        dbPoint.LayerId = resLayerId;          // <-- changed
                         modelSpace.AppendEntity(dbPoint);
                         tr.AddNewlyCreatedDBObject(dbPoint, true);
                         appended++;
                     }
+
 
                     tr.Commit();
                 }
@@ -474,7 +489,7 @@ namespace ResidenceSync
             List<Point3d> points = new List<Point3d>();
             using (Database masterDb = new Database(false, true))
             {
-                masterDb.ReadDwgFile(MASTER_PATH, FileShare.ReadWrite, false, null);
+                masterDb.ReadDwgFile(MASTER_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
                 masterDb.CloseInput(true);
 
                 using (Transaction tr = masterDb.TransactionManager.StartTransaction())
