@@ -3,11 +3,14 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.ApplicationServices.Core;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
-using Autodesk.AutoCAD.ApplicationServices.Core;
+using Autodesk.Gis.Map.Host;
+using Autodesk.Gis.Map.ObjectData;
+using Autodesk.Gis.Map.Utilities;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 
 
@@ -15,9 +18,15 @@ namespace ResidenceSync
 {
     public class ResidenceSyncCommands
     {
-        private const string MASTER_PATH = @"C:\_CG_SHARED\Master_Residences.dwg";
+        private const string MASTER_POINTS_PATH = @"C:\_CG_SHARED\Master_Residences.dwg";
+        private const string MASTER_SECTIONS_PATH = @"C:\_CG_SHARED\Master_Sections.dwg";
+        private const string PREFERRED_OD_TABLE = "SECTIONS";
         private const string RESIDENCE_LAYER = "Z-RESIDENCE";
         private const double LENGTH_TOLERANCE = 1e-9;
+        private static readonly string[] SectionFieldAliases = { "SEC", "SECTION" };
+        private static readonly string[] TownshipFieldAliases = { "TWP", "TOWNSHIP" };
+        private static readonly string[] RangeFieldAliases = { "RGE", "RANGE" };
+        private static readonly string[] MeridianFieldAliases = { "MER", "MERIDIAN" };
 
         [CommandMethod("ResidenceSync", "PUSHRES", CommandFlags.Modal)]
         public void PushResidences()
@@ -35,25 +44,26 @@ namespace ResidenceSync
                 return;
             }
 
-            if (!PromptCornerPair(ed, out Point3d sketchTopLeft, out Point3d sketchTopRight))
-            {
-                return;
-            }
-
             if (!PromptSectionPolyline(ed, out ObjectId sectionId))
             {
                 return;
             }
 
-            if (!TryGetSectionCorners(doc.Database, sectionId, out Point3d trueTopLeft, out Point3d trueTopRight))
+            if (!TryGetSectionCorners(doc.Database, sectionId, out Point3d localTopLeft, out Point3d localTopRight))
             {
                 ed.WriteMessage("\nPUSHRES: Failed to derive true section corners.");
                 return;
             }
 
-            if (!TryBuildSimilarity(trueTopLeft, trueTopRight, sketchTopLeft, sketchTopRight, out _, out Matrix3d sketchToMaster))
+            if (!TryFindMasterSectionByOd(sectionKey, out Point3d masterTopLeft, out Point3d masterTopRight, out _))
             {
-                ed.WriteMessage("\nPUSHRES: Invalid similarity transform (check picked corners).");
+                ed.WriteMessage($"\nPUSHRES: Failed to locate {sectionKey} in master sections.");
+                return;
+            }
+
+            if (!TryBuildSimilarity(masterTopLeft, masterTopRight, localTopLeft, localTopRight, out _, out Matrix3d sketchToMaster))
+            {
+                ed.WriteMessage("\nPUSHRES: Invalid similarity transform (check section geometry).");
                 return;
             }
 
@@ -122,31 +132,26 @@ namespace ResidenceSync
                 return;
             }
 
-            if (!PromptCornerPair(ed, out Point3d sketchTopLeft, out Point3d sketchTopRight))
-            {
-                return;
-            }
-
             if (!PromptSectionPolyline(ed, out ObjectId sectionId))
             {
                 return;
             }
 
-            if (!TryGetSectionCorners(doc.Database, sectionId, out Point3d trueTopLeft, out Point3d trueTopRight))
+            if (!TryGetSectionCorners(doc.Database, sectionId, out Point3d localTopLeft, out Point3d localTopRight))
             {
                 ed.WriteMessage("\nPULLRES: Failed to derive true section corners.");
                 return;
             }
 
-            if (!TryBuildSimilarity(trueTopLeft, trueTopRight, sketchTopLeft, sketchTopRight, out Matrix3d masterToSketch, out Matrix3d sketchToMaster))
+            if (!TryFindMasterSectionByOd(sectionKey, out Point3d masterTopLeft, out Point3d masterTopRight, out Aabb2d masterAabb))
             {
-                ed.WriteMessage("\nPULLRES: Invalid similarity transform (check picked corners).");
+                ed.WriteMessage($"\nPULLRES: Failed to locate {sectionKey} in master sections.");
                 return;
             }
 
-            if (!BuildSectionAabb(trueTopLeft, trueTopRight, out Aabb2d sectionBox))
+            if (!TryBuildSimilarity(masterTopLeft, masterTopRight, localTopLeft, localTopRight, out Matrix3d masterToSketch, out _))
             {
-                ed.WriteMessage("\nPULLRES: Section extents are degenerate.");
+                ed.WriteMessage("\nPULLRES: Invalid similarity transform (check section geometry).");
                 return;
             }
 
@@ -161,7 +166,7 @@ namespace ResidenceSync
             List<Point3d> sketchPoints = new List<Point3d>();
             foreach (Point3d pt in masterPoints)
             {
-                if (IsInsideAabb(sectionBox, pt))
+                if (IsInsideAabb(masterAabb, pt))
                 {
                     Point3d mapped = pt.TransformBy(masterToSketch);
                     sketchPoints.Add(mapped);
@@ -200,6 +205,86 @@ namespace ResidenceSync
 
             ed.WriteMessage($"\nPULLRES: Inserted {sketchPoints.Count} residence point(s) into this sketch for {sectionKey}.");
         }
+
+        private bool TryFindMasterSectionByOd(SectionKey sectionKey, out Point3d masterTopLeft, out Point3d masterTopRight, out Aabb2d masterAabb)
+        {
+            masterTopLeft = Point3d.Origin;
+            masterTopRight = Point3d.Origin;
+            masterAabb = default;
+
+            if (!File.Exists(MASTER_SECTIONS_PATH))
+            {
+                return false;
+            }
+
+            DocumentCollection docCollection = AcadApp.DocumentManager;
+            Document activeDocument = docCollection.MdiActiveDocument;
+            Document masterDocument = null;
+            bool openedHere = false;
+
+            try
+            {
+                masterDocument = GetOpenDocumentByPath(docCollection, MASTER_SECTIONS_PATH);
+                if (masterDocument == null)
+                {
+                    masterDocument = docCollection.Open(MASTER_SECTIONS_PATH, false);
+                    openedHere = true;
+                }
+
+                using (DocumentLock docLock = masterDocument.LockDocument(DocumentLockMode.ReadOnly, null, null, true))
+                {
+                    var projectModel = HostMapApplicationServices.Application.Projects.GetProject(masterDocument);
+                    if (projectModel == null)
+                    {
+                        return false;
+                    }
+
+                    Tables tables = projectModel.ODTables;
+                    if (tables == null)
+                    {
+                        return false;
+                    }
+
+                    List<string> tableNames = BuildOdTableSearchOrder(tables);
+                    if (tableNames.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    ObjectId matchedId = FindSectionPolylineByOd(masterDocument.Database, tables, tableNames, sectionKey);
+                    if (matchedId.IsNull)
+                    {
+                        return false;
+                    }
+
+                    if (!TryGetSectionCorners(masterDocument.Database, matchedId, out masterTopLeft, out masterTopRight))
+                    {
+                        return false;
+                    }
+
+                    if (!BuildSectionAabb(masterTopLeft, masterTopRight, out masterAabb))
+                    {
+                        return false;
+                    }
+
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (openedHere && masterDocument != null)
+                {
+                    masterDocument.CloseAndDiscard();
+                }
+
+                activeDocument?.Activate();
+            }
+        }
+
         private static void EnsurePointStyleVisible()
         {
             try
@@ -211,6 +296,250 @@ namespace ResidenceSync
             {
                 // ignore if system vars are locked
             }
+        }
+
+        private static Document GetOpenDocumentByPath(DocumentCollection docCollection, string fullPath)
+        {
+            if (docCollection == null || string.IsNullOrWhiteSpace(fullPath))
+            {
+                return null;
+            }
+
+            string normalizedTarget = NormalizePath(fullPath);
+            foreach (Document openDoc in docCollection)
+            {
+                if (openDoc == null)
+                {
+                    continue;
+                }
+
+                string docPath = NormalizePath(openDoc.Name);
+                if (!string.IsNullOrEmpty(docPath) && string.Equals(docPath, normalizedTarget, StringComparison.OrdinalIgnoreCase))
+                {
+                    return openDoc;
+                }
+            }
+
+            return null;
+        }
+
+        private static string NormalizePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return null;
+            }
+
+            try
+            {
+                return Path.GetFullPath(path);
+            }
+            catch
+            {
+                return path;
+            }
+        }
+
+        private List<string> BuildOdTableSearchOrder(Tables tables)
+        {
+            List<string> names = new List<string>();
+            if (tables == null)
+            {
+                return names;
+            }
+
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrWhiteSpace(PREFERRED_OD_TABLE) && tables.IsTableDefined(PREFERRED_OD_TABLE))
+            {
+                names.Add(PREFERRED_OD_TABLE);
+                seen.Add(PREFERRED_OD_TABLE);
+            }
+
+            foreach (string name in tables.GetTableNames())
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    continue;
+                }
+
+                if (seen.Add(name))
+                {
+                    names.Add(name);
+                }
+            }
+
+            return names;
+        }
+
+        private ObjectId FindSectionPolylineByOd(Database database, Tables tables, IEnumerable<string> tableNames, SectionKey sectionKey)
+        {
+            if (database == null || tables == null || tableNames == null)
+            {
+                return ObjectId.Null;
+            }
+
+            ObjectId matchedId = ObjectId.Null;
+
+            using (Transaction tr = database.TransactionManager.StartTransaction())
+            {
+                BlockTable blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
+                BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                foreach (ObjectId entId in modelSpace)
+                {
+                    Entity entity = tr.GetObject(entId, OpenMode.ForRead) as Entity;
+                    if (!IsPolylineEntity(entity))
+                    {
+                        continue;
+                    }
+
+                    foreach (string tableName in tableNames)
+                    {
+                        if (string.IsNullOrWhiteSpace(tableName))
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            using (Table table = tables[tableName])
+                            {
+                                if (table == null)
+                                {
+                                    continue;
+                                }
+
+                                FieldDefinitions fieldDefs = table.FieldDefinitions;
+                                using (Records records = table.GetObjectTableRecords(0, entity.ObjectId, OpenMode.OpenForRead, true))
+                                {
+                                    if (records == null)
+                                    {
+                                        continue;
+                                    }
+
+                                    foreach (Record record in records)
+                                    {
+                                        if (RecordMatchesSection(sectionKey, record, fieldDefs))
+                                        {
+                                            matchedId = entity.ObjectId;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+
+                        if (!matchedId.IsNull)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (!matchedId.IsNull)
+                    {
+                        break;
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return matchedId;
+        }
+
+        private static bool IsPolylineEntity(Entity entity)
+        {
+            return entity is Polyline || entity is Polyline2d || entity is Polyline3d;
+        }
+
+        private bool RecordMatchesSection(SectionKey target, Record record, FieldDefinitions fieldDefs)
+        {
+            if (record == null || fieldDefs == null)
+            {
+                return false;
+            }
+
+            if (!TryGetFieldValue(record, fieldDefs, SectionFieldAliases, out string section))
+            {
+                return false;
+            }
+
+            if (!TryGetFieldValue(record, fieldDefs, TownshipFieldAliases, out string township))
+            {
+                return false;
+            }
+
+            if (!TryGetFieldValue(record, fieldDefs, RangeFieldAliases, out string range))
+            {
+                return false;
+            }
+
+            if (!TryGetFieldValue(record, fieldDefs, MeridianFieldAliases, out string meridian))
+            {
+                return false;
+            }
+
+            return target.Equals(section, township, range, meridian);
+        }
+
+        private bool TryGetFieldValue(Record record, FieldDefinitions fieldDefs, string[] aliases, out string value)
+        {
+            value = null;
+
+            if (record == null || fieldDefs == null || aliases == null || aliases.Length == 0)
+            {
+                return false;
+            }
+
+            foreach (FieldDefinition field in fieldDefs)
+            {
+                if (field == null)
+                {
+                    continue;
+                }
+
+                if (!aliases.Any(alias => alias.Equals(field.Name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                MapValue mapValue;
+                try
+                {
+                    mapValue = record[field.Name];
+                }
+                catch
+                {
+                    mapValue = null;
+                }
+
+                string candidate = MapValueToString(mapValue);
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    continue;
+                }
+
+                value = candidate.Trim();
+                return true;
+            }
+
+            return false;
+        }
+
+        private string MapValueToString(MapValue mapValue)
+        {
+            if (mapValue == null)
+            {
+                return null;
+            }
+
+            string raw = mapValue.ToString();
+            return string.IsNullOrWhiteSpace(raw) ? null : raw;
         }
         private bool PromptSectionKey(Editor ed, out SectionKey key)
         {
@@ -429,24 +758,24 @@ namespace ResidenceSync
                 return 0;
             }
 
-            string directory = Path.GetDirectoryName(MASTER_PATH);
+            string directory = Path.GetDirectoryName(MASTER_POINTS_PATH);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             {
                 Directory.CreateDirectory(directory);
             }
 
-            if (!File.Exists(MASTER_PATH))
+            if (!File.Exists(MASTER_POINTS_PATH))
             {
                 using (Database newDb = new Database(true, true))
                 {
-                    newDb.SaveAs(MASTER_PATH, DwgVersion.Current);
+                    newDb.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
                 }
             }
 
             int appended = 0;
             using (Database masterDb = new Database(false, true))
             {
-                masterDb.ReadDwgFile(MASTER_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                masterDb.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
                 masterDb.CloseInput(true);
 
                 using (Transaction tr = masterDb.TransactionManager.StartTransaction())
@@ -472,7 +801,7 @@ namespace ResidenceSync
                     tr.Commit();
                 }
 
-                masterDb.SaveAs(MASTER_PATH, DwgVersion.Current);
+                masterDb.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
             }
 
             return appended;
@@ -480,7 +809,7 @@ namespace ResidenceSync
 
         private List<Point3d> ReadPointsFromMaster(out bool exists)
         {
-            exists = File.Exists(MASTER_PATH);
+            exists = File.Exists(MASTER_POINTS_PATH);
             if (!exists)
             {
                 return new List<Point3d>();
@@ -489,7 +818,7 @@ namespace ResidenceSync
             List<Point3d> points = new List<Point3d>();
             using (Database masterDb = new Database(false, true))
             {
-                masterDb.ReadDwgFile(MASTER_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                masterDb.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
                 masterDb.CloseInput(true);
 
                 using (Transaction tr = masterDb.TransactionManager.StartTransaction())
@@ -571,16 +900,24 @@ namespace ResidenceSync
         {
             public SectionKey(string sec, string twp, string rge, string mer)
             {
-                Section = sec;
-                Township = twp;
-                Range = rge;
-                Meridian = mer;
+                Section = (sec ?? string.Empty).Trim();
+                Township = (twp ?? string.Empty).Trim();
+                Range = (rge ?? string.Empty).Trim();
+                Meridian = (mer ?? string.Empty).Trim();
             }
 
             public string Section { get; }
             public string Township { get; }
             public string Range { get; }
             public string Meridian { get; }
+
+            public bool Equals(string section, string township, string range, string meridian)
+            {
+                return string.Equals(Section, section?.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                       string.Equals(Township, township?.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                       string.Equals(Range, range?.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                       string.Equals(Meridian, meridian?.Trim(), StringComparison.OrdinalIgnoreCase);
+            }
 
             public override string ToString()
             {
