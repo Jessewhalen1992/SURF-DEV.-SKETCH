@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
@@ -8,10 +9,16 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
+using Autodesk.Gis.Map;
 using Autodesk.Gis.Map.Host;
+using Autodesk.Gis.Map.Constants;
 using Autodesk.Gis.Map.ObjectData;
 using Autodesk.Gis.Map.Utilities;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+using DbOpenMode = Autodesk.AutoCAD.DatabaseServices.OpenMode;
+using OdDataType = Autodesk.Gis.Map.Constants.DataType;
+using OdOpenMode = Autodesk.Gis.Map.Constants.OpenMode;
+using OdTable = Autodesk.Gis.Map.ObjectData.Table;
 
 
 namespace ResidenceSync
@@ -23,11 +30,6 @@ namespace ResidenceSync
         private const string PREFERRED_OD_TABLE = "SECTIONS";
         private const string RESIDENCE_LAYER = "Z-RESIDENCE";
         private const double LENGTH_TOLERANCE = 1e-9;
-        private static readonly string[] SectionFieldAliases = { "SEC", "SECTION" };
-        private static readonly string[] TownshipFieldAliases = { "TWP", "TOWNSHIP" };
-        private static readonly string[] RangeFieldAliases = { "RGE", "RANGE" };
-        private static readonly string[] MeridianFieldAliases = { "MER", "MERIDIAN" };
-
         [CommandMethod("ResidenceSync", "PUSHRES", CommandFlags.Modal)]
         public void PushResidences()
         {
@@ -93,7 +95,7 @@ namespace ResidenceSync
                         continue;
                     }
 
-                    BlockReference blockRef = tr.GetObject(sel.ObjectId, OpenMode.ForRead, false) as BlockReference;
+                    BlockReference blockRef = tr.GetObject(sel.ObjectId, DbOpenMode.ForRead, false) as BlockReference;
                     if (blockRef == null)
                     {
                         continue;
@@ -185,8 +187,8 @@ namespace ResidenceSync
                 {
                     EnsureLayer(doc.Database, RESIDENCE_LAYER, tr);
 
-                    BlockTable bt = (BlockTable)tr.GetObject(doc.Database.BlockTableId, OpenMode.ForRead);
-                    BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                    BlockTable bt = (BlockTable)tr.GetObject(doc.Database.BlockTableId, DbOpenMode.ForRead);
+                    BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForWrite);
 
                     foreach (Point3d point in sketchPoints)
                     {
@@ -206,8 +208,236 @@ namespace ResidenceSync
             ed.WriteMessage($"\nPULLRES: Inserted {sketchPoints.Count} residence point(s) into this sketch for {sectionKey}.");
         }
 
+        [CommandMethod("ResidenceSync", "RESINDEX", CommandFlags.Modal)]
+        public void BuildSectionIndex()
+        {
+            Editor ed = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
+            string indexPath = Path.ChangeExtension(MASTER_SECTIONS_PATH, ".index.csv");
+            if (!File.Exists(MASTER_SECTIONS_PATH))
+            {
+                ed?.WriteMessage($"\nRESINDEX: Master sections drawing not found: {MASTER_SECTIONS_PATH}");
+                return;
+            }
+
+            DocumentCollection docs = AcadApp.DocumentManager;
+            Document master = GetOpenDocumentByPath(docs, MASTER_SECTIONS_PATH);
+            bool openedHere = false;
+            if (master == null)
+            {
+                master = docs.Open(MASTER_SECTIONS_PATH, false);
+                openedHere = true;
+            }
+
+            try
+            {
+                using (master.LockDocument())
+                {
+                    var mapApp = HostMapApplicationServices.Application;
+                    var project = mapApp?.Projects?.GetProject(master);
+                    if (project == null)
+                    {
+                        ed?.WriteMessage("\nRESINDEX: Map 3D project unavailable for master sections.");
+                        return;
+                    }
+
+                    Tables tables = project.ODTables;
+                    List<string> order = BuildOdTableSearchOrder(tables);
+
+                    List<string> lines = new List<string>
+                    {
+                        "SEC,TWP,RGE,MER,TLX,TLY,TRX,TRY,MINX,MINY,MAXX,MAXY"
+                    };
+                    HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    CultureInfo ic = CultureInfo.InvariantCulture;
+
+                    using (Transaction tr = master.TransactionManager.StartTransaction())
+                    {
+                        BlockTable bt = (BlockTable)tr.GetObject(master.Database.BlockTableId, DbOpenMode.ForRead);
+                        BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForRead);
+
+                        foreach (ObjectId id in ms)
+                        {
+                            Entity ent = tr.GetObject(id, DbOpenMode.ForRead) as Entity;
+                            if (!IsPolylineEntity(ent))
+                            {
+                                continue;
+                            }
+
+                            bool captured = false;
+
+                            foreach (string tn in order)
+                            {
+                                if (captured)
+                                {
+                                    break;
+                                }
+
+                                if (string.IsNullOrWhiteSpace(tn))
+                                {
+                                    continue;
+                                }
+
+                                try
+                                {
+                                    using (OdTable table = tables[tn])
+                                    {
+                                        if (table == null)
+                                        {
+                                            continue;
+                                        }
+
+                                        FieldDefinitions defs = table.FieldDefinitions;
+                                        using (Records recs = table.GetObjectTableRecords(0, ent.ObjectId, OdOpenMode.OpenForRead, true))
+                                        {
+                                            if (recs == null || recs.Count == 0)
+                                            {
+                                                continue;
+                                            }
+
+                                            foreach (Record rec in recs)
+                                            {
+                                                string sec = Read(defs, rec, new[] { "SEC", "SECTION" });
+                                                string twp = Read(defs, rec, new[] { "TWP", "TOWNSHIP" });
+                                                string rge = Read(defs, rec, new[] { "RGE", "RANGE" });
+                                                string mer = Read(defs, rec, new[] { "MER", "MERIDIAN", "M" });
+                                                if (sec == null || twp == null || rge == null || mer == null)
+                                                {
+                                                    continue;
+                                                }
+
+                                                string key = $"{Norm(sec)}|{Norm(twp)}|{Norm(rge)}|{Norm(mer)}";
+                                                if (!seen.Add(key))
+                                                {
+                                                    captured = true;
+                                                    break;
+                                                }
+
+                                                if (!TryGetSectionCorners(master.Database, ent.ObjectId, out Point3d tl, out Point3d trPt))
+                                                {
+                                                    continue;
+                                                }
+
+                                                if (!BuildSectionAabb(tl, trPt, out Aabb2d aabb))
+                                                {
+                                                    continue;
+                                                }
+
+                                                lines.Add(string.Join(",",
+                                                    Norm(sec),
+                                                    Norm(twp),
+                                                    Norm(rge),
+                                                    Norm(mer),
+                                                    tl.X.ToString("0.########", ic),
+                                                    tl.Y.ToString("0.########", ic),
+                                                    trPt.X.ToString("0.########", ic),
+                                                    trPt.Y.ToString("0.########", ic),
+                                                    aabb.MinX.ToString("0.########", ic),
+                                                    aabb.MinY.ToString("0.########", ic),
+                                                    aabb.MaxX.ToString("0.########", ic),
+                                                    aabb.MaxY.ToString("0.########", ic)));
+                                                captured = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                catch
+                                {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        tr.Commit();
+                    }
+
+                    string directory = Path.GetDirectoryName(indexPath);
+                    if (!string.IsNullOrEmpty(directory))
+                    {
+                        Directory.CreateDirectory(directory);
+                    }
+
+                    string tmp = indexPath + ".tmp";
+                    File.WriteAllLines(tmp, lines);
+                    if (File.Exists(indexPath))
+                    {
+                        File.Delete(indexPath);
+                    }
+                    File.Move(tmp, indexPath);
+
+                    ed?.WriteMessage($"\nRESINDEX: Wrote {lines.Count - 1} rows → {indexPath}");
+                }
+            }
+            catch
+            {
+                ed?.WriteMessage("\nRESINDEX: Failed to build index.");
+            }
+            finally
+            {
+                if (openedHere)
+                {
+                    try
+                    {
+                        master.CloseAndDiscard();
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                }
+            }
+
+            string Read(FieldDefinitions fdefs, Record rec, string[] aliases)
+            {
+                for (int i = 0; i < fdefs.Count; i++)
+                {
+                    FieldDefinition def = fdefs[i];
+                    if (def == null)
+                    {
+                        continue;
+                    }
+
+                    if (!aliases.Any(a => a.Equals(def.Name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue;
+                    }
+
+                    MapValue mv = rec[i];
+                    string s = MapValueToString(mv);
+                    if (!string.IsNullOrWhiteSpace(s))
+                    {
+                        return s.Trim();
+                    }
+                }
+
+                return null;
+            }
+
+            static string Norm(string s)
+            {
+                if (string.IsNullOrWhiteSpace(s))
+                {
+                    return string.Empty;
+                }
+
+                string trimmed = s.Trim();
+                if (int.TryParse(trimmed, out int n))
+                {
+                    return n.ToString(CultureInfo.InvariantCulture);
+                }
+
+                string noZeros = trimmed.TrimStart('0');
+                return noZeros.Length > 0 ? noZeros : "0";
+            }
+        }
+
         private bool TryFindMasterSectionByOd(SectionKey sectionKey, out Point3d masterTopLeft, out Point3d masterTopRight, out Aabb2d masterAabb)
         {
+            if (TryFindSectionFromIndex(sectionKey, out masterTopLeft, out masterTopRight, out masterAabb))
+            {
+                return true;
+            }
+
             masterTopLeft = Point3d.Origin;
             masterTopRight = Point3d.Origin;
             masterAabb = default;
@@ -217,47 +447,40 @@ namespace ResidenceSync
                 return false;
             }
 
-            DocumentCollection docCollection = AcadApp.DocumentManager;
-            Document activeDocument = docCollection.MdiActiveDocument;
-            Document masterDocument = null;
+            DocumentCollection docs = AcadApp.DocumentManager;
+            Document master = GetOpenDocumentByPath(docs, MASTER_SECTIONS_PATH);
             bool openedHere = false;
+            if (master == null)
+            {
+                master = docs.Open(MASTER_SECTIONS_PATH, false);
+                openedHere = true;
+            }
 
             try
             {
-                masterDocument = GetOpenDocumentByPath(docCollection, MASTER_SECTIONS_PATH);
-                if (masterDocument == null)
+                using (master.LockDocument())
                 {
-                    masterDocument = docCollection.Open(MASTER_SECTIONS_PATH, false);
-                    openedHere = true;
-                }
-
-                using (DocumentLock docLock = masterDocument.LockDocument(DocumentLockMode.ReadOnly, null, null, true))
-                {
-                    var projectModel = HostMapApplicationServices.Application.Projects.GetProject(masterDocument);
-                    if (projectModel == null)
+                    var mapApp = HostMapApplicationServices.Application;
+                    var project = mapApp?.Projects?.GetProject(master);
+                    if (project == null)
                     {
                         return false;
                     }
 
-                    Tables tables = projectModel.ODTables;
-                    if (tables == null)
+                    Tables tables = project.ODTables;
+                    List<string> names = BuildOdTableSearchOrder(tables);
+                    if (names == null || names.Count == 0)
                     {
                         return false;
                     }
 
-                    List<string> tableNames = BuildOdTableSearchOrder(tables);
-                    if (tableNames.Count == 0)
+                    ObjectId id = FindSectionPolylineByOd(master.Database, tables, names, sectionKey);
+                    if (id.IsNull)
                     {
                         return false;
                     }
 
-                    ObjectId matchedId = FindSectionPolylineByOd(masterDocument.Database, tables, tableNames, sectionKey);
-                    if (matchedId.IsNull)
-                    {
-                        return false;
-                    }
-
-                    if (!TryGetSectionCorners(masterDocument.Database, matchedId, out masterTopLeft, out masterTopRight))
+                    if (!TryGetSectionCorners(master.Database, id, out masterTopLeft, out masterTopRight))
                     {
                         return false;
                     }
@@ -276,12 +499,98 @@ namespace ResidenceSync
             }
             finally
             {
-                if (openedHere && masterDocument != null)
+                if (openedHere)
                 {
-                    masterDocument.CloseAndDiscard();
+                    try
+                    {
+                        master.CloseAndDiscard();
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                }
+            }
+        }
+
+        private bool TryFindSectionFromIndex(SectionKey key, out Point3d tl, out Point3d tr, out Aabb2d aabb)
+        {
+            tl = Point3d.Origin;
+            tr = Point3d.Origin;
+            aabb = default;
+
+            string indexPath = Path.ChangeExtension(MASTER_SECTIONS_PATH, ".index.csv");
+            if (!File.Exists(indexPath))
+            {
+                return false;
+            }
+
+            string kSec = Norm(key.Section);
+            string kTwp = Norm(key.Township);
+            string kRge = Norm(key.Range);
+            string kMer = Norm(key.Meridian);
+            CultureInfo ic = CultureInfo.InvariantCulture;
+
+            foreach (string line in File.ReadLines(indexPath))
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
                 }
 
-                activeDocument?.Activate();
+                if (line.StartsWith("SEC,", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string[] parts = line.Split(',');
+                if (parts.Length < 12)
+                {
+                    continue;
+                }
+
+                if (!Eq(parts[0], kSec) || !Eq(parts[1], kTwp) || !Eq(parts[2], kRge) || !Eq(parts[3], kMer))
+                {
+                    continue;
+                }
+
+                double tlx = double.Parse(parts[4], ic);
+                double tly = double.Parse(parts[5], ic);
+                double trx = double.Parse(parts[6], ic);
+                double tryVal = double.Parse(parts[7], ic);
+                double minx = double.Parse(parts[8], ic);
+                double miny = double.Parse(parts[9], ic);
+                double maxx = double.Parse(parts[10], ic);
+                double maxy = double.Parse(parts[11], ic);
+
+                tl = new Point3d(tlx, tly, 0);
+                tr = new Point3d(trx, tryVal, 0);
+                aabb = new Aabb2d(minx, miny, maxx, maxy);
+                return true;
+            }
+
+            return false;
+
+            static string Norm(string s)
+            {
+                if (string.IsNullOrWhiteSpace(s))
+                {
+                    return string.Empty;
+                }
+
+                string trimmed = s.Trim();
+                if (int.TryParse(trimmed, out int n))
+                {
+                    return n.ToString(CultureInfo.InvariantCulture);
+                }
+
+                string noZeros = trimmed.TrimStart('0');
+                return noZeros.Length > 0 ? noZeros : "0";
+            }
+
+            static bool Eq(string a, string b)
+            {
+                return string.Equals(Norm(a), Norm(b), StringComparison.OrdinalIgnoreCase);
             }
         }
 
@@ -383,12 +692,12 @@ namespace ResidenceSync
 
             using (Transaction tr = database.TransactionManager.StartTransaction())
             {
-                BlockTable blockTable = (BlockTable)tr.GetObject(database.BlockTableId, OpenMode.ForRead);
-                BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                BlockTable blockTable = (BlockTable)tr.GetObject(database.BlockTableId, DbOpenMode.ForRead);
+                BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(blockTable[BlockTableRecord.ModelSpace], DbOpenMode.ForRead);
 
                 foreach (ObjectId entId in modelSpace)
                 {
-                    Entity entity = tr.GetObject(entId, OpenMode.ForRead) as Entity;
+                    Entity entity = tr.GetObject(entId, DbOpenMode.ForRead) as Entity;
                     if (!IsPolylineEntity(entity))
                     {
                         continue;
@@ -403,7 +712,7 @@ namespace ResidenceSync
 
                         try
                         {
-                            using (Table table = tables[tableName])
+                            using (OdTable table = tables[tableName])
                             {
                                 if (table == null)
                                 {
@@ -411,7 +720,7 @@ namespace ResidenceSync
                                 }
 
                                 FieldDefinitions fieldDefs = table.FieldDefinitions;
-                                using (Records records = table.GetObjectTableRecords(0, entity.ObjectId, OpenMode.OpenForRead, true))
+                                using (Records records = table.GetObjectTableRecords(0, entity.ObjectId, OdOpenMode.OpenForRead, true))
                                 {
                                     if (records == null)
                                     {
@@ -457,89 +766,94 @@ namespace ResidenceSync
             return entity is Polyline || entity is Polyline2d || entity is Polyline3d;
         }
 
-        private bool RecordMatchesSection(SectionKey target, Record record, FieldDefinitions fieldDefs)
+        private bool RecordMatchesSection(SectionKey target, Record record, FieldDefinitions defs)
         {
-            if (record == null || fieldDefs == null)
+            if (record == null || defs == null)
             {
                 return false;
             }
 
-            if (!TryGetFieldValue(record, fieldDefs, SectionFieldAliases, out string section))
+            string sec = Read(defs, record, new[] { "SEC", "SECTION" });
+            string twp = Read(defs, record, new[] { "TWP", "TOWNSHIP" });
+            string rge = Read(defs, record, new[] { "RGE", "RANGE" });
+            string mer = Read(defs, record, new[] { "MER", "MERIDIAN", "M" });
+
+            if (sec == null || twp == null || rge == null || mer == null)
             {
                 return false;
             }
 
-            if (!TryGetFieldValue(record, fieldDefs, TownshipFieldAliases, out string township))
+            return EqNum(sec, target.Section)
+                && EqNum(twp, target.Township)
+                && EqNum(rge, target.Range)
+                && EqNum(mer, target.Meridian);
+
+            string Read(FieldDefinitions fdefs, Record rec, string[] aliases)
             {
-                return false;
+                for (int i = 0; i < fdefs.Count; i++)
+                {
+                    FieldDefinition def = fdefs[i];
+                    if (def == null)
+                    {
+                        continue;
+                    }
+
+                    if (!aliases.Any(a => a.Equals(def.Name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue;
+                    }
+
+                    MapValue mv = rec[i];
+                    string s = MapValueToString(mv);
+                    if (!string.IsNullOrWhiteSpace(s))
+                    {
+                        return s.Trim();
+                    }
+                }
+
+                return null;
             }
 
-            if (!TryGetFieldValue(record, fieldDefs, RangeFieldAliases, out string range))
+            static bool EqNum(string a, string b)
             {
-                return false;
-            }
+                if (int.TryParse(a?.Trim(), out int ai) && int.TryParse(b?.Trim(), out int bi))
+                {
+                    return ai == bi;
+                }
 
-            if (!TryGetFieldValue(record, fieldDefs, MeridianFieldAliases, out string meridian))
-            {
-                return false;
-            }
+                string aa = (a ?? string.Empty).TrimStart('0');
+                string bb = (b ?? string.Empty).TrimStart('0');
+                if (int.TryParse(aa, out ai) && int.TryParse(bb, out bi))
+                {
+                    return ai == bi;
+                }
 
-            return target.Equals(section, township, range, meridian);
+                return string.Equals(a?.Trim(), b?.Trim(), StringComparison.OrdinalIgnoreCase);
+            }
         }
 
-        private bool TryGetFieldValue(Record record, FieldDefinitions fieldDefs, string[] aliases, out string value)
+        private string MapValueToString(MapValue mv)
         {
-            value = null;
-
-            if (record == null || fieldDefs == null || aliases == null || aliases.Length == 0)
-            {
-                return false;
-            }
-
-            foreach (FieldDefinition field in fieldDefs)
-            {
-                if (field == null)
-                {
-                    continue;
-                }
-
-                if (!aliases.Any(alias => alias.Equals(field.Name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    continue;
-                }
-
-                MapValue mapValue;
-                try
-                {
-                    mapValue = record[field.Name];
-                }
-                catch
-                {
-                    mapValue = null;
-                }
-
-                string candidate = MapValueToString(mapValue);
-                if (string.IsNullOrWhiteSpace(candidate))
-                {
-                    continue;
-                }
-
-                value = candidate.Trim();
-                return true;
-            }
-
-            return false;
-        }
-
-        private string MapValueToString(MapValue mapValue)
-        {
-            if (mapValue == null)
+            if (mv == null)
             {
                 return null;
             }
 
-            string raw = mapValue.ToString();
-            return string.IsNullOrWhiteSpace(raw) ? null : raw;
+            switch (mv.Type)
+            {
+                case OdDataType.Character:
+                    return mv.StrValue;
+                case OdDataType.Integer:
+                    return mv.Int32Value.ToString(CultureInfo.InvariantCulture);
+                case OdDataType.Real:
+                    return mv.DoubleValue.ToString("0.####", CultureInfo.InvariantCulture);
+                // case OdDataType.SmallInt:
+                //     return mv.Int16Value.ToString(CultureInfo.InvariantCulture);
+                // case OdDataType.BigInt:
+                //     return mv.Int64Value.ToString(CultureInfo.InvariantCulture);
+                default:
+                    return null;
+            }
         }
         private bool PromptSectionKey(Editor ed, out SectionKey key)
         {
@@ -652,7 +966,7 @@ namespace ResidenceSync
             List<Point3d> vertices = new List<Point3d>();
             using (Transaction tr = db.TransactionManager.StartTransaction())
             {
-                Entity ent = tr.GetObject(polylineId, OpenMode.ForRead) as Entity;
+                Entity ent = tr.GetObject(polylineId, DbOpenMode.ForRead) as Entity;
                 if (ent is Polyline poly)
                 {
                     for (int i = 0; i < poly.NumberOfVertices; i++)
@@ -664,7 +978,7 @@ namespace ResidenceSync
                 {
                     foreach (ObjectId vertId in poly2d)
                     {
-                        Vertex2d vert = tr.GetObject(vertId, OpenMode.ForRead) as Vertex2d;
+                        Vertex2d vert = tr.GetObject(vertId, DbOpenMode.ForRead) as Vertex2d;
                         if (vert != null)
                         {
                             vertices.Add(vert.Position);
@@ -675,7 +989,7 @@ namespace ResidenceSync
                 {
                     foreach (ObjectId vertId in poly3d)
                     {
-                        PolylineVertex3d vert = tr.GetObject(vertId, OpenMode.ForRead) as PolylineVertex3d;
+                        PolylineVertex3d vert = tr.GetObject(vertId, DbOpenMode.ForRead) as PolylineVertex3d;
                         if (vert != null)
                         {
                             vertices.Add(new Point3d(vert.Position.X, vert.Position.Y, 0.0));
@@ -782,11 +1096,11 @@ namespace ResidenceSync
                 {
                     EnsureLayer(masterDb, RESIDENCE_LAYER, tr);
                     // Resolve the layer ObjectId once, then reuse
-                    LayerTable lt = (LayerTable)tr.GetObject(masterDb.LayerTableId, OpenMode.ForRead);
+                    LayerTable lt = (LayerTable)tr.GetObject(masterDb.LayerTableId, DbOpenMode.ForRead);
                     ObjectId resLayerId = lt[RESIDENCE_LAYER];
 
-                    BlockTable bt = (BlockTable)tr.GetObject(masterDb.BlockTableId, OpenMode.ForRead);
-                    BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
+                    BlockTable bt = (BlockTable)tr.GetObject(masterDb.BlockTableId, DbOpenMode.ForRead);
+                    BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForWrite);
 
                     foreach (Point3d point in pointList)
                     {
@@ -823,12 +1137,12 @@ namespace ResidenceSync
 
                 using (Transaction tr = masterDb.TransactionManager.StartTransaction())
                 {
-                    BlockTable bt = (BlockTable)tr.GetObject(masterDb.BlockTableId, OpenMode.ForRead);
-                    BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+                    BlockTable bt = (BlockTable)tr.GetObject(masterDb.BlockTableId, DbOpenMode.ForRead);
+                    BlockTableRecord modelSpace = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForRead);
 
                     foreach (ObjectId id in modelSpace)
                     {
-                        Entity ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                        Entity ent = tr.GetObject(id, DbOpenMode.ForRead) as Entity;
                         if (ent == null)
                         {
                             continue;
@@ -854,7 +1168,7 @@ namespace ResidenceSync
 
         private void EnsureLayer(Database db, string layerName, Transaction tr)
         {
-            LayerTable layerTable = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+            LayerTable layerTable = (LayerTable)tr.GetObject(db.LayerTableId, DbOpenMode.ForRead);
             if (!layerTable.Has(layerName))
             {
                 layerTable.UpgradeOpen();
@@ -911,17 +1225,56 @@ namespace ResidenceSync
             public string Range { get; }
             public string Meridian { get; }
 
+            public string SectionNormalized => Normalize(Section);
+            public string TownshipNormalized => Normalize(Township);
+            public string RangeNormalized => Normalize(Range);
+            public string MeridianNormalized => Normalize(Meridian);
+
             public bool Equals(string section, string township, string range, string meridian)
             {
-                return string.Equals(Section, section?.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                       string.Equals(Township, township?.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                       string.Equals(Range, range?.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                       string.Equals(Meridian, meridian?.Trim(), StringComparison.OrdinalIgnoreCase);
+                return NumbersEqual(Section, section)
+                    && NumbersEqual(Township, township)
+                    && NumbersEqual(Range, range)
+                    && NumbersEqual(Meridian, meridian);
             }
 
             public override string ToString()
             {
                 return $"SEC {Section}, TWP {Township}, RGE {Range}, MER {Meridian}";
+            }
+
+            private static bool NumbersEqual(string a, string b)
+            {
+                if (int.TryParse(a?.Trim(), out int ai) && int.TryParse(b?.Trim(), out int bi))
+                {
+                    return ai == bi;
+                }
+
+                string aa = Normalize(a);
+                string bb = Normalize(b);
+                if (int.TryParse(aa, out ai) && int.TryParse(bb, out bi))
+                {
+                    return ai == bi;
+                }
+
+                return string.Equals(a?.Trim(), b?.Trim(), StringComparison.OrdinalIgnoreCase);
+            }
+
+            private static string Normalize(string s)
+            {
+                if (string.IsNullOrWhiteSpace(s))
+                {
+                    return string.Empty;
+                }
+
+                string trimmed = s.Trim();
+                if (int.TryParse(trimmed, out int n))
+                {
+                    return n.ToString(CultureInfo.InvariantCulture);
+                }
+
+                string noZeros = trimmed.TrimStart('0');
+                return noZeros.Length > 0 ? noZeros : "0";
             }
         }
 
