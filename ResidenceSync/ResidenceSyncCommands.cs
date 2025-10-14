@@ -212,6 +212,7 @@ namespace ResidenceSync
         {
             Editor ed = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
             string indexPath = Path.ChangeExtension(MASTER_SECTIONS_PATH, ".index.csv");
+
             if (!File.Exists(MASTER_SECTIONS_PATH))
             {
                 ed?.WriteMessage($"\nRESINDEX: Master sections drawing not found: {MASTER_SECTIONS_PATH}");
@@ -241,90 +242,100 @@ namespace ResidenceSync
                     Tables tables = project.ODTables;
                     List<string> order = BuildOdTableSearchOrder(tables);
 
-                    List<string> lines = new List<string>
-            {
-                "SEC,TWP,RGE,MER,TLX,TLY,TRX,TRY,MINX,MINY,MAXX,MAXY"
-            };
-                    HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    CultureInfo ic = CultureInfo.InvariantCulture;
+                    // If multiple entities carry the same OD, keep the one with **largest vertex AABB area**
+                    var bestByKey = new Dictionary<string, (double area, double tlx, double tly, double trx, double @try, Aabb2d aabb)>(StringComparer.OrdinalIgnoreCase);
 
                     using (Transaction tr = master.TransactionManager.StartTransaction())
                     {
                         BlockTable bt = (BlockTable)tr.GetObject(master.Database.BlockTableId, DbOpenMode.ForRead);
                         BlockTableRecord ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForRead);
 
+                        int scanned = 0;
                         foreach (ObjectId id in ms)
                         {
                             Entity ent = tr.GetObject(id, DbOpenMode.ForRead) as Entity;
                             if (!IsPolylineEntity(ent)) continue;
 
-                            bool captured = false;
+                            // Get robust TL/TR and AABB from this entity's **vertices only**
+                            double tlx, tly, trx, @try;
+                            Aabb2d aabb;
+                            if (!TryGetCornersFromVerticesStrict(master.Database, id, tr, out tlx, out tly, out trx, out @try, out aabb))
+                                continue;
 
                             foreach (string tn in order)
                             {
-                                if (captured) break;
                                 if (string.IsNullOrWhiteSpace(tn)) continue;
 
-                                try
+                                using (OdTable t = tables[tn])
                                 {
-                                    using (OdTable table = tables[tn])
+                                    if (t == null) continue;
+                                    FieldDefinitions defs = t.FieldDefinitions;
+
+                                    using (Records recs = t.GetObjectTableRecords(0, ent.ObjectId, OdOpenMode.OpenForRead, true))
                                     {
-                                        if (table == null) continue;
+                                        if (recs == null || recs.Count == 0) continue;
 
-                                        FieldDefinitions defs = table.FieldDefinitions;
-                                        using (Records recs = table.GetObjectTableRecords(0, ent.ObjectId, OdOpenMode.OpenForRead, true))
+                                        foreach (Record rec in recs)
                                         {
-                                            if (recs == null || recs.Count == 0) continue;
+                                            string sec = ReadOd(defs, rec, new[] { "SEC", "SECTION" }, MapValueToString);
+                                            string twp = ReadOd(defs, rec, new[] { "TWP", "TOWNSHIP" }, MapValueToString);
+                                            string rge = ReadOd(defs, rec, new[] { "RGE", "RANGE" }, MapValueToString);
+                                            string mer = ReadOd(defs, rec, new[] { "MER", "MERIDIAN", "M" }, MapValueToString);
+                                            if (string.IsNullOrWhiteSpace(sec) ||
+                                                string.IsNullOrWhiteSpace(twp) ||
+                                                string.IsNullOrWhiteSpace(rge) ||
+                                                string.IsNullOrWhiteSpace(mer))
+                                                continue;
 
-                                            foreach (Record rec in recs)
+                                            string kSec = NormStr(sec), kTwp = NormStr(twp), kRge = NormStr(rge), kMer = NormStr(mer);
+                                            string key = $"{kSec}|{kTwp}|{kRge}|{kMer}";
+
+                                            double area = (aabb.MaxX - aabb.MinX) * (aabb.MaxY - aabb.MinY);
+                                            if (!bestByKey.TryGetValue(key, out var cur) || area > cur.area)
                                             {
-                                                string sec = ReadOd(defs, rec, new[] { "SEC", "SECTION" }, MapValueToString);
-                                                string twp = ReadOd(defs, rec, new[] { "TWP", "TOWNSHIP" }, MapValueToString);
-                                                string rge = ReadOd(defs, rec, new[] { "RGE", "RANGE" }, MapValueToString);
-                                                string mer = ReadOd(defs, rec, new[] { "MER", "MERIDIAN", "M" }, MapValueToString);
-                                                if (sec == null || twp == null || rge == null || mer == null) continue;
-
-                                                string key = $"{NormStr(sec)}|{NormStr(twp)}|{NormStr(rge)}|{NormStr(mer)}";
-                                                if (!seen.Add(key))
-                                                {
-                                                    captured = true;
-                                                    break;
-                                                }
-
-                                                Point3d tl, trPt;
-                                                if (!TryGetSectionCorners(master.Database, ent.ObjectId, out tl, out trPt)) continue;
-                                                Aabb2d aabb;
-                                                if (!BuildSectionAabb(tl, trPt, out aabb)) continue;
-
-                                                lines.Add(string.Join(",",
-                                                    NormStr(sec),
-                                                    NormStr(twp),
-                                                    NormStr(rge),
-                                                    NormStr(mer),
-                                                    tl.X.ToString("0.########", ic),
-                                                    tl.Y.ToString("0.########", ic),
-                                                    trPt.X.ToString("0.########", ic),
-                                                    trPt.Y.ToString("0.########", ic),
-                                                    aabb.MinX.ToString("0.########", ic),
-                                                    aabb.MinY.ToString("0.########", ic),
-                                                    aabb.MaxX.ToString("0.########", ic),
-                                                    aabb.MaxY.ToString("0.########", ic)));
-                                                captured = true;
-                                                break;
+                                                bestByKey[key] = (area, tlx, tly, trx, @try, aabb);
                                             }
                                         }
                                     }
                                 }
-                                catch { continue; }
                             }
+
+                            scanned++;
+                            if ((scanned % 10000) == 0) ed?.WriteMessage($"\nRESINDEX: scanned {scanned} entities...");
                         }
 
                         tr.Commit();
                     }
 
-                    string directory = Path.GetDirectoryName(indexPath);
-                    if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+                    // Write CSV
+                    var ic = CultureInfo.InvariantCulture;
+                    var lines = new List<string>(bestByKey.Count + 8)
+            {
+                "SEC,TWP,RGE,MER,TLX,TLY,TRX,TRY,MINX,MINY,MAXX,MAXY"
+            };
 
+                    foreach (var kv in bestByKey)
+                    {
+                        string key = kv.Key;
+                        var v = kv.Value;
+                        var parts = key.Split('|');
+                        string sec = parts[0], twp = parts[1], rge = parts[2], mer = parts[3];
+
+                        lines.Add(string.Join(",",
+                            sec, twp, rge, mer,
+                            v.tlx.ToString("0.########", ic),
+                            v.tly.ToString("0.########", ic),
+                            v.trx.ToString("0.########", ic),
+                            v.@try.ToString("0.########", ic),
+                            v.aabb.MinX.ToString("0.########", ic),
+                            v.aabb.MinY.ToString("0.########", ic),
+                            v.aabb.MaxX.ToString("0.########", ic),
+                            v.aabb.MaxY.ToString("0.########", ic)
+                        ));
+                    }
+
+                    string dir = Path.GetDirectoryName(indexPath);
+                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                     string tmp = indexPath + ".tmp";
                     File.WriteAllLines(tmp, lines);
                     if (File.Exists(indexPath)) File.Delete(indexPath);
@@ -333,9 +344,9 @@ namespace ResidenceSync
                     ed?.WriteMessage($"\nRESINDEX: Wrote {lines.Count - 1} rows → {indexPath}");
                 }
             }
-            catch
+            catch (System.Exception ex)
             {
-                ed?.WriteMessage("\nRESINDEX: Failed to build index.");
+                ed?.WriteMessage($"\nRESINDEX: Failed: {ex.Message}");
             }
             finally
             {
@@ -344,6 +355,205 @@ namespace ResidenceSync
                     try { master.CloseAndDiscard(); } catch { /* ignore */ }
                 }
             }
+        }
+        // Derive TL/TR and AABB strictly from this polyline's **own vertices**.
+        // Robust to tiny tilt/vertex jitter. Never uses neighboring geometry.
+        // Derive TL/TR strictly from this polyline’s vertices.
+        // 1) Build AABB from vertices.
+        // 2) Take a "top band" = points with Y within yTol of maxY.
+        // 3) TL = minX within top band; TR = maxX within top band.
+        private bool TryGetCornersFromVerticesStrict(Database db, ObjectId id, Transaction tr,
+            out double tlx, out double tly, out double trx, out double @try, out Aabb2d aabb)
+        {
+            tlx = tly = trx = @try = 0;
+            aabb = default;
+
+            var ent = tr.GetObject(id, DbOpenMode.ForRead) as Entity;
+            if (ent == null) return false;
+
+            var pts = new List<Point3d>(16);
+
+            if (ent is Polyline pl)
+            {
+                int n = pl.NumberOfVertices;
+                for (int i = 0; i < n; i++) pts.Add(pl.GetPoint3dAt(i));
+            }
+            else if (ent is Polyline2d pl2)
+            {
+                foreach (ObjectId vId in pl2)
+                {
+                    var v = (Vertex2d)tr.GetObject(vId, DbOpenMode.ForRead);
+                    pts.Add(v.Position);
+                }
+            }
+            else if (ent is Polyline3d pl3)
+            {
+                foreach (ObjectId vId in pl3)
+                {
+                    var v = (PolylineVertex3d)tr.GetObject(vId, DbOpenMode.ForRead);
+                    pts.Add(new Point3d(v.Position.X, v.Position.Y, 0));
+                }
+            }
+            else return false;
+
+            if (pts.Count < 4) return false;
+
+            // --- Compute 2D convex hull for robustness ---
+            // helps remove interior vertices and isolate outline.
+            var hull = ConvexHull2D(pts);
+            if (hull.Count < 3) hull = pts;
+
+            double minX = hull.Min(p => p.X);
+            double maxX = hull.Max(p => p.X);
+            double minY = hull.Min(p => p.Y);
+            double maxY = hull.Max(p => p.Y);
+            aabb = new Aabb2d(minX, minY, maxX, maxY);
+
+            // --- Find the longest horizontal (or near-horizontal) edge with highest average Y ---
+            // --- Find the longest horizontal (or near-horizontal) edge with highest average Y ---
+            double bestY = double.MinValue;
+            Point3d bestA = Point3d.Origin, bestB = Point3d.Origin;
+
+            const double tolAngle = 5 * Math.PI / 180.0; // within 5 degrees of horizontal
+
+            for (int i = 0; i < hull.Count; i++)
+            {
+                Point3d p1 = hull[i];
+                Point3d p2 = hull[(i + 1) % hull.Count];
+                Vector3d v = p2 - p1;
+
+                // Determine how close this segment is to horizontal (using Z-axis as normal)
+                double ang = v.GetAngleTo(Vector3d.XAxis, Vector3d.ZAxis);
+                if (ang > tolAngle && Math.Abs(ang - Math.PI) > tolAngle)
+                    continue; // not roughly horizontal
+
+                double avgY = (p1.Y + p2.Y) * 0.5;
+                if (avgY > bestY)
+                {
+                    bestY = avgY;
+                    bestA = p1;
+                    bestB = p2;
+                }
+            }
+
+            if (bestY == double.MinValue)
+            {
+                // fallback: axis-aligned
+                tlx = minX; tly = maxY;
+                trx = maxX; @try = maxY;
+                return true;
+            }
+
+            // Order left->right based on X
+            if (bestA.X <= bestB.X)
+            {
+                tlx = bestA.X; tly = bestA.Y;
+                trx = bestB.X; @try = bestB.Y;
+            }
+            else
+            {
+                tlx = bestB.X; tly = bestB.Y;
+                trx = bestA.X; @try = bestA.Y;
+            }
+
+            return true;
+        }
+
+        // --- Simple convex hull helper (Graham scan) ---
+        private static List<Point3d> ConvexHull2D(List<Point3d> pts)
+        {
+            if (pts.Count <= 3) return new List<Point3d>(pts);
+
+            var sorted = pts.OrderBy(p => p.X).ThenBy(p => p.Y).ToList();
+            List<Point3d> lower = new List<Point3d>();
+            foreach (var p in sorted)
+            {
+                while (lower.Count >= 2 && Cross(lower[lower.Count - 2], lower[lower.Count - 1], p) <= 0)
+                    lower.RemoveAt(lower.Count - 1);
+                lower.Add(p);
+            }
+
+            List<Point3d> upper = new List<Point3d>();
+            for (int i = sorted.Count - 1; i >= 0; i--)
+            {
+                var p = sorted[i];
+                while (upper.Count >= 2 && Cross(upper[upper.Count - 2], upper[upper.Count - 1], p) <= 0)
+                    upper.RemoveAt(upper.Count - 1);
+                upper.Add(p);
+            }
+
+            lower.RemoveAt(lower.Count - 1);
+            upper.RemoveAt(upper.Count - 1);
+            lower.AddRange(upper);
+            return lower;
+        }
+
+        private static double Cross(Point3d o, Point3d a, Point3d b)
+        {
+            return (a.X - o.X) * (b.Y - o.Y) - (a.Y - o.Y) * (b.X - o.X);
+        }
+
+        private bool TryGetEntityAabb(Database db, ObjectId id, Transaction tr, out Aabb2d aabb)
+        {
+            aabb = default;
+            try
+            {
+                var ent = tr.GetObject(id, DbOpenMode.ForRead) as Entity;
+                if (ent == null) return false;
+
+                try
+                {
+                    Extents3d ext = ent.GeometricExtents; // includes arcs/bulges, rotation-safe
+                    aabb = new Aabb2d(ext.MinPoint.X, ext.MinPoint.Y, ext.MaxPoint.X, ext.MaxPoint.Y);
+                    return true;
+                }
+                catch
+                {
+                    // Fallback: vertex sweep
+                    double minX = double.MaxValue, minY = double.MaxValue;
+                    double maxX = double.MinValue, maxY = double.MinValue;
+
+                    if (ent is Polyline pl)
+                    {
+                        int n = pl.NumberOfVertices;
+                        for (int i = 0; i < n; i++)
+                        {
+                            Point3d p = pl.GetPoint3dAt(i);
+                            if (p.X < minX) minX = p.X; if (p.Y < minY) minY = p.Y;
+                            if (p.X > maxX) maxX = p.X; if (p.Y > maxY) maxY = p.Y;
+                        }
+                    }
+                    else if (ent is Polyline2d pl2)
+                    {
+                        foreach (ObjectId vId in pl2)
+                        {
+                            var v = (Vertex2d)tr.GetObject(vId, DbOpenMode.ForRead);
+                            Point3d p = v.Position;
+                            if (p.X < minX) minX = p.X; if (p.Y < minY) minY = p.Y;
+                            if (p.X > maxX) maxX = p.X; if (p.Y > maxY) maxY = p.Y;
+                        }
+                    }
+                    else if (ent is Polyline3d pl3)
+                    {
+                        foreach (ObjectId vId in pl3)
+                        {
+                            var v = (PolylineVertex3d)tr.GetObject(vId, DbOpenMode.ForRead);
+                            Point3d p = new Point3d(v.Position.X, v.Position.Y, 0);
+                            if (p.X < minX) minX = p.X; if (p.Y < minY) minY = p.Y;
+                            if (p.X > maxX) maxX = p.X; if (p.Y > maxY) maxY = p.Y;
+                        }
+                    }
+                    else
+                    {
+                        return false;
+                    }
+
+                    if (minX == double.MaxValue) return false;
+                    aabb = new Aabb2d(minX, minY, maxX, maxY);
+                    return true;
+                }
+            }
+            catch { return false; }
         }
 
         private bool TryFindMasterSectionByOd(SectionKey sectionKey, out Point3d masterTopLeft, out Point3d masterTopRight, out Aabb2d masterAabb)
@@ -435,41 +645,108 @@ namespace ResidenceSync
             aabb = default;
 
             string indexPath = Path.ChangeExtension(MASTER_SECTIONS_PATH, ".index.csv");
-            if (!File.Exists(indexPath)) return false;
+            if (!File.Exists(indexPath))
+                return false;
 
-            string kSec = NormStr(key.Section);
-            string kTwp = NormStr(key.Township);
-            string kRge = NormStr(key.Range);
-            string kMer = NormStr(key.Meridian);
             CultureInfo ic = CultureInfo.InvariantCulture;
 
-            foreach (string line in File.ReadLines(indexPath))
+            // Normalize the key parts once
+            string kSec = NormalizeKeyNumber(key.Section, ic);
+            string kTwp = NormalizeKeyNumber(key.Township, ic);
+            string kRge = NormalizeKeyNumber(key.Range, ic);
+            string kMer = NormalizeKeyNumber(key.Meridian, ic);
+
+            try
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                if (line.StartsWith("SEC,", StringComparison.OrdinalIgnoreCase)) continue;
+                // Open with sharing + tiny retry for transient locks
+                System.IO.StreamReader reader = null;
+                for (int attempt = 0; attempt < 6; attempt++)
+                {
+                    try
+                    {
+                        var fs = new FileStream(indexPath, FileMode.Open, FileAccess.Read,
+                                                FileShare.ReadWrite | FileShare.Delete);
+                        reader = new StreamReader(fs);
+                        break;
+                    }
+                    catch (IOException)
+                    {
+                        // brief backoff (total ~375 ms worst case)
+                        System.Threading.Thread.Sleep(75);
+                    }
+                }
+                if (reader == null) throw new IOException("Unable to open index CSV (locked).");
 
-                string[] parts = line.Split(',');
-                if (parts.Length < 12) continue;
+                using (reader)
+                {
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        if (line.StartsWith("SEC,", StringComparison.OrdinalIgnoreCase)) continue;
 
-                if (!EqNorm(parts[0], kSec) || !EqNorm(parts[1], kTwp) || !EqNorm(parts[2], kRge) || !EqNorm(parts[3], kMer))
-                    continue;
+                        string[] parts = line.Split(',');
+                        if (parts.Length < 12) continue;
 
-                double tlx = double.Parse(parts[4], ic);
-                double tly = double.Parse(parts[5], ic);
-                double trx = double.Parse(parts[6], ic);
-                double tryVal = double.Parse(parts[7], ic);
-                double minx = double.Parse(parts[8], ic);
-                double miny = double.Parse(parts[9], ic);
-                double maxx = double.Parse(parts[10], ic);
-                double maxy = double.Parse(parts[11], ic);
+                        // Match on normalized numbers (handles leading zeros etc.)
+                        if (!NumbersEqual(parts[0], kSec, ic) ||
+                            !NumbersEqual(parts[1], kTwp, ic) ||
+                            !NumbersEqual(parts[2], kRge, ic) ||
+                            !NumbersEqual(parts[3], kMer, ic))
+                        {
+                            continue;
+                        }
 
-                tl = new Point3d(tlx, tly, 0);
-                tr = new Point3d(trx, tryVal, 0);
-                aabb = new Aabb2d(minx, miny, maxx, maxy);
-                return true;
+                        // Parse doubles
+                        if (!double.TryParse(parts[4], NumberStyles.Float, ic, out double tlx)) continue;
+                        if (!double.TryParse(parts[5], NumberStyles.Float, ic, out double tly)) continue;
+                        if (!double.TryParse(parts[6], NumberStyles.Float, ic, out double trxVal)) continue;
+                        if (!double.TryParse(parts[7], NumberStyles.Float, ic, out double tryVal)) continue;
+                        if (!double.TryParse(parts[8], NumberStyles.Float, ic, out double minx)) continue;
+                        if (!double.TryParse(parts[9], NumberStyles.Float, ic, out double miny)) continue;
+                        if (!double.TryParse(parts[10], NumberStyles.Float, ic, out double maxx)) continue;
+                        if (!double.TryParse(parts[11], NumberStyles.Float, ic, out double maxy)) continue;
+
+                        tl = new Point3d(tlx, tly, 0);
+                        tr = new Point3d(trxVal, tryVal, 0);
+                        aabb = new Aabb2d(minx, miny, maxx, maxy);
+                        return true;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                // Friendly note if something still has an exclusive lock
+                var ed = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
+                ed?.WriteMessage("\nNote: Could not read Master_Sections.index.csv (locked by another process). Close it and try again.");
+                return false;
+            }
+            catch
+            {
+                return false;
             }
 
             return false;
+
+            // ---- local helpers (non-static to stay C# 7.3 compatible) ----
+            string NormalizeKeyNumber(string s, IFormatProvider provider)
+            {
+                if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+                s = s.Trim();
+                if (int.TryParse(s, NumberStyles.Integer, provider, out int n))
+                    return n.ToString(provider);
+
+                string noZeros = s.TrimStart('0');
+                return noZeros.Length > 0 ? noZeros : "0";
+            }
+
+            bool NumbersEqual(string a, string b, IFormatProvider provider)
+            {
+                // Compare using normalized forms
+                string na = NormalizeKeyNumber(a, provider);
+                string nb = NormalizeKeyNumber(b, provider);
+                return string.Equals(na, nb, StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         private static void EnsurePointStyleVisible()
@@ -693,6 +970,334 @@ namespace ResidenceSync
             if (int.TryParse(trimmed, out n)) return n.ToString(CultureInfo.InvariantCulture);
             string noZeros = trimmed.TrimStart('0');
             return noZeros.Length > 0 ? noZeros : "0";
+        }
+        // SURFDEV – build 3×3 sections from CSV and rings, placed at a user insertion point.
+        // Prompts: SD centre (rings) -> scale -> SEC/TWP/RGE/MER -> TL/TR (orientation) -> insertion point (stamp placement)
+        // SURFDEV – build 3×3 sections from CSV and rings, placed at a user insertion point.
+        // Prompts: SD centre (rings) -> scale -> SEC/TWP/RGE/MER -> TL/TR (orientation) -> insertion point (stamp placement)
+        // SURFDEV — 3×3 Surface Development from CSV
+        // - One canonical orientation from the center section (TL->TR in master).
+        // - Spacing EW/NS taken from neighbors in CSV (captures road-allowance gaps).
+        // - Scale from map scale (50k/25k/20k), NOT from the pick length.
+        // - Rings centered at the SD center pick, sized by map scale.
+        // - Insert so the middle-section center = the user’s insertion point.
+        // SURFDEV — Axis-aligned 3×3 grid from CSV (no rotation from TL/TR).
+        // Steps:
+        // 1) Pick SD centre (for rings only)
+        // 2) Pick scale (50k/25k/20k) → sets section/ring/text sizes
+        // 3–6) Enter SEC/TWP/RGE/MER (center section)
+        // 7–8) Pick TL/TR of a real section (ONLY to measure rings offset relative to that section)
+        // 9) Pick insertion point (centre of middle section)
+        // Result: draw 3×3 sections from CSV in a single canonical basis, scaled by map scale;
+        //         place rings at insertion-centre + normalized offset from the TL/TR pick.
+        // SURFDEV — Axis-aligned 3×3 grid from CSV (no rotation from TL/TR).
+        // TL/TR pick is used ONLY to compute the rings’ relative offset; grid scale = map scale.
+        // SURFDEV — Draw the 3×3 grid strictly from CSV positions (per-section AABB).
+        // - No inferred stepping; each section uses its own CSV TL/TR/AABB.
+        // - Axis-aligned stamp: scale only from map scale (50k/25k/20k).
+        // - TL/TR pick is used ONLY to compute rings' relative offset from the middle-section center.
+        // - Insertion point places the middle-section center.
+        // - Rings: 0.5 / 1.5 / 2.0 km radii.
+        [CommandMethod("ResidenceSync", "SURFDEV", CommandFlags.Modal)]
+        public void DrawSurfaceDevelopment3x3()
+        {
+            var doc = AcadApp.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+
+            // 1) SD centre (for rings only – we’ll convert this into a normalized offset)
+            var pC = ed.GetPoint("\nPick Centre of Surface Development (rings only): ");
+            if (pC.Status != PromptStatus.OK) return;
+            Point3d sdCenterPicked = pC.Value;
+
+            // 2) Map scale → drawing units per km / metre
+            var pko = new PromptKeywordOptions("\nPick scale [50k/25k/20k]: ") { AllowNone = false };
+            pko.Keywords.Add("50k"); pko.Keywords.Add("25k"); pko.Keywords.Add("20k");
+            var kres = ed.GetKeywords(pko);
+            if (kres.Status != PromptStatus.OK) return;
+            string scaleKey = (kres.StringResult ?? "50k").ToLowerInvariant();
+
+            // Per your earlier spec: 2.0 km ring = 200 @ 1:50k → 100 units per km
+            double unitsPerKm = (scaleKey == "25k") ? 200.0 : (scaleKey == "20k") ? 250.0 : 100.0;
+            double unitsPerMetre = unitsPerKm / 1000.0;
+            double secTextHt = (scaleKey == "50k") ? 15.0 : (scaleKey == "25k") ? 30.0 : 37.5;
+            double ringTextHt = (scaleKey == "50k") ? 8.0 : (scaleKey == "25k") ? 16.0 : 20.0;
+
+            // 3–6) Center section key
+            if (!PromptSectionKey(ed, out SectionKey key)) return;
+
+            // 7–8) Pick TL/TR on THIS SKETCH (only to measure where you want the rings relative to the NORTH edge)
+            if (!PromptCornerPair(ed, out Point3d tlPick, out Point3d trPick)) return;
+            Vector3d eastS = (trPick - tlPick).GetNormal();
+            Vector3d northS = eastS.RotateBy(Math.PI / 2.0, Vector3d.ZAxis).GetNormal();
+            double wPick = trPick.DistanceTo(tlPick);
+            if (wPick < 1e-6) { ed.WriteMessage("\nSURFDEV: TL/TR distance too small."); return; }
+
+            // A normalized offset of your ring centre **from the north edge mid** (not the section centre)
+            Point3d midNorthPick = tlPick + 0.5 * (trPick - tlPick);  // mid-point of northern edge (in the pick frame)
+            Vector3d offPick = sdCenterPicked - midNorthPick;
+            double uNorm = offPick.DotProduct(eastS) / Math.Max(1e-9, wPick); // along east (+) / west (–)
+            double vNorm = offPick.DotProduct(northS) / Math.Max(1e-9, wPick); // +down is negative (since north points up)
+
+            // 9) Insertion point (centre of middle section in SKETCH frame)
+            var pIns = ed.GetPoint("\nPick insertion point (centre of middle section): ");
+            if (pIns.Status != PromptStatus.OK) return;
+            Point3d insertCenter = pIns.Value;
+
+            // ---- CSV lookup for center section (26–64–3–6 example you provided) ----
+            if (!TryFindSectionFromIndex(key, out Point3d TLm_c, out Point3d TRm_c, out Aabb2d BBc))
+            {
+                ed.WriteMessage("\nSURFDEV: Selected section not found in CSV index.");
+                return;
+            }
+
+            // MASTER frame: compute the *true* north (top) edge and the section height from CSV AABB
+            Vector3d eastM_c = (TRm_c - TLm_c);
+            double wM_c = eastM_c.Length;
+            if (wM_c < 1e-6) { ed.WriteMessage("\nSURFDEV: Degenerate north edge in CSV."); return; }
+            eastM_c = eastM_c / wM_c;
+            double hM_c = Math.Max(1e-6, BBc.MaxY - BBc.MinY);
+            Vector3d northM_c = eastM_c.RotateBy(Math.PI / 2.0, Vector3d.ZAxis); // points “up” from north edge
+
+            // Centre of the middle section in MASTER frame (use the AABB centre)
+            Point3d centerMm = new Point3d((BBc.MinX + BBc.MaxX) * 0.5, (BBc.MinY + BBc.MaxY) * 0.5, 0);
+
+            // MASTER → SKETCH mapping: uniform **scale only**, no rotation; preserve master orientation
+            Point3d Map(Point3d pm)
+            {
+                Vector3d d = pm - centerMm;
+                return insertCenter + new Vector3d(d.X * unitsPerMetre, d.Y * unitsPerMetre, 0);
+            }
+
+            // 6×6 serpentine numbering grid for neighbours (row 0 = north/top, col 0 = west/left)
+            int[,] serp =
+            {
+        {31,32,33,34,35,36},
+        {30,29,28,27,26,25},
+        {19,20,21,22,23,24},
+        {18,17,16,15,14,13},
+        { 7, 8, 9,10,11,12},
+        { 6, 5, 4, 3, 2, 1}
+    };
+
+            // Locate selected SEC in serp
+            if (!int.TryParse(key.Section.TrimStart('0'), out int secNum))
+            { ed.WriteMessage("\nSURFDEV: SEC not numeric."); return; }
+
+            int selRow = -1, selCol = -1;
+            for (int r = 0; r < 6 && selRow < 0; r++)
+                for (int c = 0; c < 6; c++)
+                    if (serp[r, c] == secNum) { selRow = r; selCol = c; break; }
+            if (selRow < 0) { ed.WriteMessage("\nSURFDEV: SEC not in 1..36."); return; }
+
+            SectionKey KeyAt(int row, int col)
+            {
+                if (row < 0 || row > 5 || col < 0 || col > 5) return default(SectionKey);
+                int s = serp[row, col];
+                return new SectionKey(s.ToString(), key.Township, key.Range, key.Meridian);
+            }
+
+            using (doc.LockDocument())
+            using (var tr = doc.TransactionManager.StartTransaction())
+            {
+                // Layers + colors
+                EnsureLayer(doc.Database, "L-USEC", tr);
+                EnsureLayer(doc.Database, "L-QSEC", tr);
+                EnsureLayer(doc.Database, "AUX-BUFFER", tr);
+
+                var lt = (LayerTable)tr.GetObject(doc.Database.LayerTableId, DbOpenMode.ForRead);
+                ((LayerTableRecord)tr.GetObject(lt["L-USEC"], DbOpenMode.ForWrite)).Color =
+                    Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 253);
+                ((LayerTableRecord)tr.GetObject(lt["L-QSEC"], DbOpenMode.ForWrite)).Color =
+                    Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, 254);
+
+                var bt = (BlockTable)tr.GetObject(doc.Database.BlockTableId, DbOpenMode.ForRead);
+                var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForWrite);
+
+                // Draw each of the 9 sections using **true north edge** (TL/TR from CSV) + **CSV height**
+                for (int dRow = -1; dRow <= 1; dRow++)       // -1 north, +1 south
+                {
+                    for (int dCol = -1; dCol <= 1; dCol++)   // -1 west, +1 east
+                    {
+                        SectionKey k2 = KeyAt(selRow + dRow, selCol + dCol);
+                        if (string.IsNullOrEmpty(k2.Section)) continue;
+
+                        if (!TryFindSectionFromIndex(k2, out Point3d TLm, out Point3d TRm, out Aabb2d BB))
+                            continue; // missing neighbour → skip
+
+                        Vector3d eastM = (TRm - TLm);
+                        double wM = eastM.Length;
+                        if (wM < 1e-6) continue;
+                        eastM = eastM / wM;
+
+                        double hM = Math.Max(1e-6, BB.MaxY - BB.MinY);         // **height from CSV**, not assumed = width
+                        Vector3d northM = eastM.RotateBy(Math.PI / 2.0, Vector3d.ZAxis);
+
+                        // Build FOUR corners from TL/TR + height **in MASTER**
+                        Point3d TLs = Map(TLm);
+                        Point3d TRs = Map(TRm);
+                        Point3d BLs = Map(TLm - northM * hM);
+                        Point3d BRs = Map(TRm - northM * hM);
+
+                        // Outline – 4 lines (prevents bridging)
+                        var l1 = new Line(TLs, TRs) { Layer = "L-USEC" };
+                        var l2 = new Line(TRs, BRs) { Layer = "L-USEC" };
+                        var l3 = new Line(BRs, BLs) { Layer = "L-USEC" };
+                        var l4 = new Line(BLs, TLs) { Layer = "L-USEC" };
+                        ms.AppendEntity(l1); tr.AddNewlyCreatedDBObject(l1, true);
+                        ms.AppendEntity(l2); tr.AddNewlyCreatedDBObject(l2, true);
+                        ms.AppendEntity(l3); tr.AddNewlyCreatedDBObject(l3, true);
+                        ms.AppendEntity(l4); tr.AddNewlyCreatedDBObject(l4, true);
+
+                        // Quarter lines confined to THIS section only
+                        Point3d midTop = new Point3d((TLs.X + TRs.X) * 0.5, (TLs.Y + TRs.Y) * 0.5, 0);
+                        Point3d midBot = new Point3d((BLs.X + BRs.X) * 0.5, (BLs.Y + BRs.Y) * 0.5, 0);
+                        Point3d midLft = new Point3d((TLs.X + BLs.X) * 0.5, (TLs.Y + BLs.Y) * 0.5, 0);
+                        Point3d midRgt = new Point3d((TRs.X + BRs.X) * 0.5, (TRs.Y + BRs.Y) * 0.5, 0);
+
+                        var qv = new Line(midTop, midBot) { Layer = "L-QSEC" };
+                        var qh = new Line(midLft, midRgt) { Layer = "L-QSEC" };
+                        ms.AppendEntity(qv); tr.AddNewlyCreatedDBObject(qv, true);
+                        ms.AppendEntity(qh); tr.AddNewlyCreatedDBObject(qh, true);
+
+                        // Optional section number at geometric centre
+                        Point3d ctr = new Point3d(
+                            (TLs.X + TRs.X + BLs.X + BRs.X) / 4.0,
+                            (TLs.Y + TRs.Y + BLs.Y + BRs.Y) / 4.0, 0);
+                        var tx = new DBText
+                        {
+                            Position = ctr,
+                            Height = secTextHt,
+                            TextString = k2.Section.TrimStart('0'),
+                            Layer = "AUX-BUFFER",
+                            HorizontalMode = TextHorizontalMode.TextCenter,
+                            VerticalMode = TextVerticalMode.TextVerticalMid,
+                            AlignmentPoint = ctr
+                        };
+                        ms.AppendEntity(tx); tr.AddNewlyCreatedDBObject(tx, true);
+                    }
+                }
+
+                // ----- RINGS -----
+                // Place rings using the normalized offset **from the NORTH edge mid** of the centre section.
+                // Compute that north-edge mid in SKETCH:
+                Point3d TLs_c = Map(TLm_c);
+                Point3d TRs_c = Map(TRm_c);
+                Point3d midNorthSketch = new Point3d((TLs_c.X + TRs_c.X) * 0.5, (TLs_c.Y + TRs_c.Y) * 0.5, 0);
+                Vector3d eastS_c = (TRs_c - TLs_c).GetNormal();
+                double wS_c = TLs_c.DistanceTo(TRs_c);
+                Vector3d northS_c = eastS_c.RotateBy(Math.PI / 2.0, Vector3d.ZAxis).GetNormal();
+
+                // Rebuild ring centre from normalized offsets in SKETCH units
+                Point3d ringCentreFinal = midNorthSketch + (eastS_c * (uNorm * wS_c)) + (northS_c * (vNorm * wS_c));
+
+                double[] radiiKm = { 0.5, 1.5, 2.0 };
+                foreach (double km in radiiKm)
+                {
+                    double r = km * unitsPerKm;
+                    var c = new Circle(ringCentreFinal, Vector3d.ZAxis, r) { Layer = "AUX-BUFFER" };
+                    ms.AppendEntity(c); tr.AddNewlyCreatedDBObject(c, true);
+
+                    Point3d labPt = ringCentreFinal + new Vector3d(r + (0.1 * unitsPerKm), 0, 0);
+                    var lab = new DBText
+                    {
+                        Position = labPt,
+                        Height = ringTextHt,
+                        TextString = km.ToString("0.## km"),
+                        Layer = "AUX-BUFFER",
+                        HorizontalMode = TextHorizontalMode.TextCenter,
+                        VerticalMode = TextVerticalMode.TextVerticalMid,
+                        AlignmentPoint = labPt
+                    };
+                    ms.AppendEntity(lab); tr.AddNewlyCreatedDBObject(lab, true);
+                }
+
+                tr.Commit();
+            }
+
+            ed.WriteMessage("\nSURFDEV: Sections drawn from CSV north edge (TL/TR) + CSV height; rings placed by normalized offset from north edge.");
+        }
+        // Compute TL/TR and AABB strictly from this entity's vertices (no GeometricExtents).
+        // TL/TR come from the "top band" (maxY within tolerance) to resist tiny tilt/bulge.
+        private bool TryGetSectionBoxFromVertices(
+            Database db, ObjectId id, Transaction tr,
+            out double tlx, out double tly, out double trx, out double try_,
+            out Aabb2d aabb)
+        {
+            tlx = tly = trx = try_ = 0.0;
+            aabb = default;
+
+            var ent = tr.GetObject(id, DbOpenMode.ForRead) as Entity;
+            if (ent == null) return false;
+
+            var pts = new List<Point3d>(16);
+
+            if (ent is Polyline pl)
+            {
+                int n = pl.NumberOfVertices;
+                for (int i = 0; i < n; i++) pts.Add(pl.GetPoint3dAt(i));
+            }
+            else if (ent is Polyline2d pl2)
+            {
+                foreach (ObjectId vId in pl2)
+                {
+                    var v = (Vertex2d)tr.GetObject(vId, DbOpenMode.ForRead);
+                    pts.Add(v.Position);
+                }
+            }
+            else if (ent is Polyline3d pl3)
+            {
+                foreach (ObjectId vId in pl3)
+                {
+                    var v = (PolylineVertex3d)tr.GetObject(vId, DbOpenMode.ForRead);
+                    pts.Add(new Point3d(v.Position.X, v.Position.Y, 0));
+                }
+            }
+            else return false;
+
+            if (pts.Count == 0) return false;
+
+            // AABB from vertices only
+            double minX = pts.Min(p => p.X);
+            double maxX = pts.Max(p => p.X);
+            double minY = pts.Min(p => p.Y);
+            double maxY = pts.Max(p => p.Y);
+            aabb = new Aabb2d(minX, minY, maxX, maxY);
+
+            // "Top band" selection: all verts within tol of top Y
+            const double topTol = 0.05; // metres; bump to 0.1 if your data is noisier
+            var topPts = pts.Where(p => (maxY - p.Y) <= topTol).ToList();
+            if (topPts.Count == 0) topPts = pts;  // defensive fallback
+
+            var tl = topPts.OrderBy(p => p.X).First();
+            var trp = topPts.OrderByDescending(p => p.X).First();
+
+            tlx = tl.X; tly = tl.Y;
+            trx = trp.X; try_ = trp.Y;
+            return true;
+        }
+        // Heuristic: how likely this AABB is a single DLS section (lower is better)
+        private double ScoreAabbAsSection(Aabb2d aabb)
+        {
+            // Nominal DLS section (interior) ~ 1609.344 m each side (1 mile), but RA/corrections vary
+            const double mile = 1609.344;
+            double w = aabb.MaxX - aabb.MinX;
+            double h = aabb.MaxY - aabb.MinY;
+            if (w <= 0 || h <= 0) return double.MaxValue;
+
+            // Quick reject: absurd sizes (too small/too large)
+            if (w < 800 || h < 800 || w > 4000 || h > 4000) return 1e9;
+
+            // Prefer square-ish (width≈height), and both close to a mile
+            double squarePenalty = Math.Abs(w - h);
+            double sizePenalty = Math.Abs(w - mile) + Math.Abs(h - mile);
+
+            // Mild preference for reasonably large area (avoid tiny sliver outlines)
+            double area = w * h;
+            double areaPenalty = 0.0;
+            if (area < 1.0e6) areaPenalty = (1.0e6 - area) * 0.001; // weaker weight
+
+            return squarePenalty + sizePenalty * 0.5 + areaPenalty;
         }
 
         private static bool EqNorm(string a, string b)
