@@ -246,6 +246,7 @@ namespace ResidenceSync
             using (Transaction tr = doc.TransactionManager.StartTransaction())
             {
                 EnsureLayer(doc.Database, "L-USEC", tr);
+                EnsureLayer(doc.Database, "L-QSEC", tr);
                 EnsureLayer(doc.Database, RESIDENCE_LAYER, tr);
 
                 var bt = (BlockTable)tr.GetObject(doc.Database.BlockTableId, DbOpenMode.ForRead);
@@ -261,6 +262,16 @@ namespace ResidenceSync
                 pl.Closed = rec.closed;
                 pl.Layer = "L-USEC";
                 ms.AppendEntity(pl); tr.AddNewlyCreatedDBObject(pl, true);
+
+                if (TryGetQuarterAnchorsByEdgeMedianVertexChain(rec.verts,
+                        out Point3d topV, out Point3d botV,
+                        out Point3d leftV, out Point3d rightV))
+                {
+                    var qv = new Line(topV, botV) { Layer = "L-QSEC" };
+                    var qh = new Line(leftV, rightV) { Layer = "L-QSEC" };
+                    ms.AppendEntity(qv); tr.AddNewlyCreatedDBObject(qv, true);
+                    ms.AppendEntity(qh); tr.AddNewlyCreatedDBObject(qh, true);
+                }
 
                 // Residences inside this polygon from master file
                 var residences = ReadPointsFromMaster(out bool exists);
