@@ -30,6 +30,7 @@ namespace ResidenceSync
 
         // Tolerances (metres, WCS)
         private const double DEDUPE_TOL = 0.25;  // merge if within 25 cm
+        private const double REPLACE_TOL = 3.0;   // replace if within 3 m
         private const double ERASE_TOL = 0.001;  // polygon test epsilon (ray-cast denom guard)
         private const double TRANSFORM_VALIDATION_TOL = 0.75; // scaled push must align within < 1 m
 
@@ -403,15 +404,6 @@ namespace ResidenceSync
                 return;
             }
 
-            // Mode: Add-only or Replace (clear master points inside section first)
-            var pko = new PromptKeywordOptions("\nPush mode [AddOnly/Replace]: ") { AllowNone = false };
-            pko.Keywords.Add("AddOnly");
-            pko.Keywords.Add("Replace");
-            pko.Keywords.Default = "AddOnly";
-            var kres = ed.GetKeywords(pko);
-            if (kres.Status != PromptStatus.OK) return;
-            bool replace = string.Equals(kres.StringResult, "Replace", StringComparison.OrdinalIgnoreCase);
-
             // Selection: DBPOINTs and/or INSERTs (BlockReference)
             var selOpts = new PromptSelectionOptions
             {
@@ -464,8 +456,10 @@ namespace ResidenceSync
             }
 
             // Upsert into master
-            int written = UpsertPointsInMasterForSection(key, rec.verts, inside, replace);
-            ed.WriteMessage($"\nPUSHRESV: {(replace ? "Replaced" : "Added")} {written} point(s) in master for {key}.");
+            int written = UpsertPointsInMasterForSection(key, rec.verts, inside, out int replaced);
+            ed.WriteMessage($"\nPUSHRESV: Added {written} point(s) in master for {key}.");
+            if (replaced > 0)
+                ed.WriteMessage($"\nPUSHRESV: Replaced {replaced} existing residence(s) within {REPLACE_TOL:F2} m.");
         }
 
         // =========================================================================
@@ -537,15 +531,6 @@ namespace ResidenceSync
                 return;
             }
 
-            // Mode: Add-only or Replace
-            var pko = new PromptKeywordOptions("\nPush mode [AddOnly/Replace]: ") { AllowNone = false };
-            pko.Keywords.Add("AddOnly");
-            pko.Keywords.Add("Replace");
-            pko.Keywords.Default = "AddOnly";
-            var kres = ed.GetKeywords(pko);
-            if (kres.Status != PromptStatus.OK) return;
-            bool replace = string.Equals(kres.StringResult, "Replace", StringComparison.OrdinalIgnoreCase);
-
             var selOpts = new PromptSelectionOptions
             {
                 MessageForAdding = "\nSelect residence points/blocks to push (scaled): "
@@ -593,15 +578,18 @@ namespace ResidenceSync
                 return;
             }
 
-            int written = UpsertPointsInMasterForSection(key, rec.verts, transformed, replace);
-            ed.WriteMessage($"\nPUSHRESS: {(replace ? "Replaced" : "Added")} {written} point(s) in master for {key}.");
+            int written = UpsertPointsInMasterForSection(key, rec.verts, transformed, out int replaced);
+            ed.WriteMessage($"\nPUSHRESS: Added {written} point(s) in master for {key}.");
+            if (replaced > 0)
+                ed.WriteMessage($"\nPUSHRESS: Replaced {replaced} existing residence(s) within {REPLACE_TOL:F2} m.");
         }
 
         // =========================================================================
-        // Master write helper: Add-only or Replace points inside a section
+        // Master write helper: Add or replace points inside a section automatically
         // =========================================================================
-        private int UpsertPointsInMasterForSection(SectionKey key, List<Point3d> sectionPoly, List<Point3d> newPoints, bool replace)
+        private int UpsertPointsInMasterForSection(SectionKey key, List<Point3d> sectionPoly, List<Point3d> newPoints, out int replaced)
         {
+            replaced = 0;
             if (newPoints == null || newPoints.Count == 0) return 0;
 
             // Ensure target DWG exists
@@ -643,39 +631,40 @@ namespace ResidenceSync
                             existing.Add((id, br.Position));
                     }
 
-                    if (replace)
-                    {
-                        // Erase everything in master that lies inside this section
-                        int erased = 0;
-                        foreach (var ex in existing)
-                        {
-                            if (PointInPolygon2D(sectionPoly, ex.pos.X, ex.pos.Y))
-                            {
-                                var obj = tr.GetObject(ex.id, DbOpenMode.ForWrite, false);
-                                obj.Erase(); erased++;
-                            }
-                        }
-                        if (erased > 0) existing = existing.Where(e =>
-                            !PointInPolygon2D(sectionPoly, e.pos.X, e.pos.Y)).ToList();
-                    }
+                    var existingInside = existing
+                        .Select(e => (e.id, e.pos, inside: PointInPolygon2D(sectionPoly, e.pos.X, e.pos.Y)))
+                        .Where(e => e.inside)
+                        .Select(e => (e.id, e.pos))
+                        .ToList();
 
-                    // Build a quick dedupe set over existing (AddOnly mode)
-                    var existingPts = existing.Select(e => e.pos).ToList();
+                    // Build a quick dedupe set over existing inside this section
+                    var existingPts = existingInside.Select(e => e.pos).ToList();
 
                     foreach (var p in newPoints)
                     {
                         // Safety: ensure still inside the section
                         if (!PointInPolygon2D(sectionPoly, p.X, p.Y)) continue;
 
-                        if (!replace)
+                        int idxNear = FindNearIndex(existingPts, p, REPLACE_TOL);
+                        if (idxNear >= 0)
                         {
-                            // Add-only with dedupe against existing
-                            if (HasNear(existingPts, p, DEDUPE_TOL)) continue;
+                            var ex = existingInside[idxNear];
+                            var obj = tr.GetObject(ex.id, DbOpenMode.ForWrite, false);
+                            obj.Erase();
+                            replaced++;
+                            existingInside.RemoveAt(idxNear);
+                            existingPts.RemoveAt(idxNear);
+                        }
+                        else if (HasNear(existingPts, p, DEDUPE_TOL))
+                        {
+                            continue;
                         }
 
                         var dbp = new DBPoint(p) { LayerId = resLayerId };
                         ms.AppendEntity(dbp); tr.AddNewlyCreatedDBObject(dbp, true);
                         appended++;
+                        existingInside.Add((dbp.ObjectId, p));
+                        existingPts.Add(p);
                     }
 
                     tr.Commit();
@@ -1856,16 +1845,20 @@ namespace ResidenceSync
             return inside;
         }
 
-        private static bool HasNear(List<Point3d> pts, Point3d p, double tol)
+        private static int FindNearIndex(List<Point3d> pts, Point3d p, double tol)
         {
             double tol2 = tol * tol;
-            foreach (var q in pts)
+            for (int i = 0; i < pts.Count; i++)
             {
+                var q = pts[i];
                 double dx = p.X - q.X, dy = p.Y - q.Y;
-                if (dx * dx + dy * dy <= tol2) return true;
+                if (dx * dx + dy * dy <= tol2) return i;
             }
-            return false;
+            return -1;
         }
+
+        private static bool HasNear(List<Point3d> pts, Point3d p, double tol)
+            => FindNearIndex(pts, p, tol) >= 0;
 
         private static List<Point3d> DeduplicateList(List<Point3d> pts, double tol)
         {
