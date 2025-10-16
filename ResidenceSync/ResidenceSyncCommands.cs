@@ -31,6 +31,7 @@ namespace ResidenceSync
         // Tolerances (metres, WCS)
         private const double DEDUPE_TOL = 0.25;  // merge if within 25 cm
         private const double ERASE_TOL = 0.001;  // polygon test epsilon (ray-cast denom guard)
+        private const double TRANSFORM_VALIDATION_TOL = 0.75; // scaled push must align within < 1 m
 
         // =========================================================================
         // RESINDEXV — Build vertex index (JSONL) from Master_Sections.dwg
@@ -465,6 +466,135 @@ namespace ResidenceSync
             // Upsert into master
             int written = UpsertPointsInMasterForSection(key, rec.verts, inside, replace);
             ed.WriteMessage($"\nPUSHRESV: {(replace ? "Replaced" : "Added")} {written} point(s) in master for {key}.");
+        }
+
+        // =========================================================================
+        // PUSHRESS — Push selected points using scaled section linework alignment
+        // =========================================================================
+        [CommandMethod("ResidenceSync", "PUSHRESS", CommandFlags.Modal)]
+        public void PushResidencesFromScaledSection()
+        {
+            var doc = AcadApp.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            var ed = doc.Editor;
+
+            if (!PromptSectionKey(ed, out SectionKey key)) return;
+
+            string idxPath = Path.Combine(Path.GetDirectoryName(MASTER_SECTIONS_PATH) ?? "",
+                                          "Master_Sections.index.jsonl");
+            if (!TryReadSectionFromJsonl(idxPath, key, out VertexIndexRecord rec))
+            {
+                ed.WriteMessage("\nPUSHRESS: Section not found in vertex index. Run RESINDEXV first.");
+                return;
+            }
+
+            if (!TryGetSectionTopCorners(rec.verts, out Point3d masterTopLeft, out Point3d masterTopRight))
+            {
+                ed.WriteMessage("\nPUSHRESS: Unable to determine top edge in master section outline.");
+                return;
+            }
+
+            var tlPrompt = new PromptPointOptions("\nPick TOP LEFT of the section in scaled linework: ")
+            {
+                AllowNone = false
+            };
+            var tlRes = ed.GetPoint(tlPrompt);
+            if (tlRes.Status != PromptStatus.OK) return;
+            Point3d localTopLeft = tlRes.Value;
+
+            var trPrompt = new PromptPointOptions("\nPick TOP RIGHT of the section in scaled linework: ")
+            {
+                UseBasePoint = true,
+                BasePoint = localTopLeft,
+                AllowNone = false
+            };
+            var trRes = ed.GetPoint(trPrompt);
+            if (trRes.Status != PromptStatus.OK) return;
+            Point3d localTopRight = trRes.Value;
+
+            Vector3d localVec = localTopRight - localTopLeft;
+            Vector3d masterVec = masterTopRight - masterTopLeft;
+
+            double localLen = Math.Sqrt(localVec.X * localVec.X + localVec.Y * localVec.Y);
+            double masterLen = Math.Sqrt(masterVec.X * masterVec.X + masterVec.Y * masterVec.Y);
+
+            if (localLen < 1e-6 || masterLen < 1e-6)
+            {
+                ed.WriteMessage("\nPUSHRESS: Corner picks are degenerate.");
+                return;
+            }
+
+            double scale = masterLen / localLen;
+            double angleLocal = Math.Atan2(localVec.Y, localVec.X);
+            double angleMaster = Math.Atan2(masterVec.Y, masterVec.X);
+            double angleDelta = angleMaster - angleLocal;
+
+            Point3d projectedTopRight = TransformScaledPoint(localTopRight, localTopLeft, masterTopLeft, scale, angleDelta);
+            double transformError = projectedTopRight.DistanceTo(new Point3d(masterTopRight.X, masterTopRight.Y, 0));
+            if (transformError > TRANSFORM_VALIDATION_TOL)
+            {
+                ed.WriteMessage($"\nPUSHRESS: Selected corners do not match master geometry (error {transformError:F2} m).");
+                return;
+            }
+
+            // Mode: Add-only or Replace
+            var pko = new PromptKeywordOptions("\nPush mode [AddOnly/Replace]: ") { AllowNone = false };
+            pko.Keywords.Add("AddOnly");
+            pko.Keywords.Add("Replace");
+            pko.Keywords.Default = "AddOnly";
+            var kres = ed.GetKeywords(pko);
+            if (kres.Status != PromptStatus.OK) return;
+            bool replace = string.Equals(kres.StringResult, "Replace", StringComparison.OrdinalIgnoreCase);
+
+            var selOpts = new PromptSelectionOptions
+            {
+                MessageForAdding = "\nSelect residence points/blocks to push (scaled): "
+            };
+            var filter = new SelectionFilter(new[]
+            {
+                new TypedValue((int)DxfCode.Start, "POINT,INSERT")
+            });
+
+            var sel = ed.GetSelection(selOpts, filter);
+            if (sel.Status != PromptStatus.OK || sel.Value == null || sel.Value.Count == 0)
+            {
+                ed.WriteMessage("\nPUSHRESS: Nothing selected.");
+                return;
+            }
+
+            var transformed = new List<Point3d>();
+            using (Transaction tr = doc.TransactionManager.StartTransaction())
+            {
+                foreach (SelectedObject so in sel.Value)
+                {
+                    if (so?.ObjectId.IsNull != false) continue;
+                    var ent = tr.GetObject(so.ObjectId, DbOpenMode.ForRead) as Entity;
+                    Point3d? candidate = null;
+                    if (ent is DBPoint dp)
+                        candidate = dp.Position;
+                    else if (ent is BlockReference br)
+                        candidate = br.Position;
+
+                    if (candidate.HasValue)
+                    {
+                        var mapped = TransformScaledPoint(candidate.Value, localTopLeft, masterTopLeft, scale, angleDelta);
+                        if (PointInPolygon2D(rec.verts, mapped.X, mapped.Y))
+                        {
+                            transformed.Add(mapped);
+                        }
+                    }
+                }
+                tr.Commit();
+            }
+
+            if (transformed.Count == 0)
+            {
+                ed.WriteMessage("\nPUSHRESS: No selected points mapped inside the requested section.");
+                return;
+            }
+
+            int written = UpsertPointsInMasterForSection(key, rec.verts, transformed, replace);
+            ed.WriteMessage($"\nPUSHRESS: {(replace ? "Replaced" : "Added")} {written} point(s) in master for {key}.");
         }
 
         // =========================================================================
@@ -1672,6 +1802,42 @@ namespace ResidenceSync
         }
 
         // --------- Geometry & utilities ---------
+
+        private bool TryGetSectionTopCorners(List<Point3d> poly, out Point3d topLeft, out Point3d topRight)
+        {
+            topLeft = topRight = Point3d.Origin;
+            if (poly == null || poly.Count < 2) return false;
+
+            double maxY = poly.Max(p => p.Y);
+            const double candidateTol = 0.05; // 5 cm window for the "top" edge
+
+            var candidates = poly.Where(p => (maxY - p.Y) <= candidateTol).ToList();
+            if (candidates.Count < 2)
+            {
+                candidates = poly.OrderByDescending(p => p.Y).Take(2).ToList();
+                if (candidates.Count < 2) return false;
+            }
+
+            candidates.Sort((a, b) => a.X.CompareTo(b.X));
+            topLeft = candidates.First();
+            topRight = candidates.Last();
+
+            return topLeft.DistanceTo(topRight) > 1e-6;
+        }
+
+        private static Point3d TransformScaledPoint(Point3d source, Point3d localOrigin, Point3d masterOrigin, double scale, double rotation)
+        {
+            double dx = source.X - localOrigin.X;
+            double dy = source.Y - localOrigin.Y;
+
+            double cos = Math.Cos(rotation);
+            double sin = Math.Sin(rotation);
+
+            double mx = masterOrigin.X + (dx * cos - dy * sin) * scale;
+            double my = masterOrigin.Y + (dx * sin + dy * cos) * scale;
+
+            return new Point3d(mx, my, 0);
+        }
 
         // Simple ray-cast point-in-polygon (2D)
         private static bool PointInPolygon2D(List<Point3d> poly, double x, double y)
