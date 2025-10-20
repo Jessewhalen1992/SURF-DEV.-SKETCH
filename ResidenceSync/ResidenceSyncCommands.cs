@@ -383,88 +383,6 @@ namespace ResidenceSync
             }
         }
 
-        // =========================================================================
-        // PUSHRESV — Push selected points into master for a section (Add/Replace)
-        // =========================================================================
-        [CommandMethod("ResidenceSync", "PUSHRESV", CommandFlags.Modal)]
-        public void PushResidencesForSection()
-        {
-            var doc = AcadApp.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
-            var ed = doc.Editor;
-
-            if (!PromptSectionKey(ed, out SectionKey key)) return;
-
-            string idxPath = Path.Combine(Path.GetDirectoryName(MASTER_SECTIONS_PATH) ?? "",
-                                          "Master_Sections.index.jsonl");
-            VertexIndexRecord rec;
-            if (!TryReadSectionFromJsonl(idxPath, key, out rec))
-            {
-                ed.WriteMessage("\nPUSHRESV: Section not found in vertex index. Run RESINDEXV first.");
-                return;
-            }
-
-            // Selection: DBPOINTs and/or INSERTs (BlockReference)
-            var selOpts = new PromptSelectionOptions
-            {
-                MessageForAdding = "\nSelect residence points/blocks to push: "
-            };
-            var filter = new SelectionFilter(new[]
-            {
-                new TypedValue((int)DxfCode.Start, "POINT,INSERT")
-            });
-
-            var sel = ed.GetSelection(selOpts, filter);
-            if (sel.Status != PromptStatus.OK || sel.Value == null || sel.Value.Count == 0)
-            {
-                ed.WriteMessage("\nPUSHRESV: Nothing selected.");
-                return;
-            }
-
-            // Collect WCS positions from selection
-            var positions = new List<Point3d>();
-            using (Transaction tr = doc.TransactionManager.StartTransaction())
-            {
-                foreach (SelectedObject so in sel.Value)
-                {
-                    if (so?.ObjectId.IsNull != false) continue;
-                    var ent = tr.GetObject(so.ObjectId, DbOpenMode.ForRead) as Entity;
-                    if (ent is DBPoint dp)
-                    {
-                        positions.Add(dp.Position);
-                    }
-                    else if (ent is BlockReference br)
-                    {
-                        positions.Add(br.Position);
-                    }
-                }
-                tr.Commit();
-            }
-
-            if (positions.Count == 0)
-            {
-                ed.WriteMessage("\nPUSHRESV: No eligible point positions found in selection.");
-                return;
-            }
-
-            // Keep only those inside the **section polygon** (master coords)
-            var inside = positions.Where(p => PointInPolygon2D(rec.verts, p.X, p.Y)).ToList();
-            if (inside.Count == 0)
-            {
-                ed.WriteMessage("\nPUSHRESV: No selected points lie inside the requested section.");
-                return;
-            }
-
-            // Upsert into master
-            int written = UpsertPointsInMasterForSection(key, rec.verts, inside, out int replaced);
-            ed.WriteMessage($"\nPUSHRESV: Added {written} point(s) in master for {key}.");
-            if (replaced > 0)
-                ed.WriteMessage($"\nPUSHRESV: Replaced {replaced} existing residence(s) within {REPLACE_TOL:F2} m.");
-        }
-
-        // =========================================================================
-        // PUSHRESS — Push selected points using scaled section linework alignment
-        // =========================================================================
         [CommandMethod("ResidenceSync", "PUSHRESS", CommandFlags.Modal)]
         public void PushResidencesFromScaledSection()
         {
@@ -472,8 +390,17 @@ namespace ResidenceSync
             if (doc == null) return;
             var ed = doc.Editor;
 
+            // 0) Fast guard: master must be closed
+            if (IsMasterPointsOpen())
+            {
+                ed.WriteMessage("\nPUSHRESS: 'Master_Residences.dwg' is open. Close it and try again.");
+                return;
+            }
+
+            // 1) Section key (only used to read master outline & top edge)
             if (!PromptSectionKey(ed, out SectionKey key)) return;
 
+            // 2) Load master section vertices from JSONL
             string idxPath = Path.Combine(Path.GetDirectoryName(MASTER_SECTIONS_PATH) ?? "",
                                           "Master_Sections.index.jsonl");
             if (!TryReadSectionFromJsonl(idxPath, key, out VertexIndexRecord rec))
@@ -482,198 +409,221 @@ namespace ResidenceSync
                 return;
             }
 
+            // 3) Find master top-left/top-right (for transform)
             if (!TryGetSectionTopCorners(rec.verts, out Point3d masterTopLeft, out Point3d masterTopRight))
             {
                 ed.WriteMessage("\nPUSHRESS: Unable to determine top edge in master section outline.");
                 return;
             }
 
-            var tlPrompt = new PromptPointOptions("\nPick TOP LEFT of the section in scaled linework: ")
-            {
-                AllowNone = false
-            };
-            var tlRes = ed.GetPoint(tlPrompt);
+            // 4) Pick TOP‑LEFT / TOP‑RIGHT on SCALED linework (in UCS)
+            var tlRes = ed.GetPoint(new PromptPointOptions("\nPick TOP LEFT of the section in scaled linework: ")
+            { AllowNone = false });
             if (tlRes.Status != PromptStatus.OK) return;
-            Point3d localTopLeft = tlRes.Value;
 
-            var trPrompt = new PromptPointOptions("\nPick TOP RIGHT of the section in scaled linework: ")
+            var trRes = ed.GetPoint(new PromptPointOptions("\nPick TOP RIGHT of the section in scaled linework: ")
             {
                 UseBasePoint = true,
-                BasePoint = localTopLeft,
+                BasePoint = tlRes.Value,
                 AllowNone = false
-            };
-            var trRes = ed.GetPoint(trPrompt);
+            });
             if (trRes.Status != PromptStatus.OK) return;
-            Point3d localTopRight = trRes.Value;
 
-            Vector3d localVec = localTopRight - localTopLeft;
+            // 5) UCS → WCS
+            Matrix3d ucs = ed.CurrentUserCoordinateSystem;
+            Point3d localTL_WCS = tlRes.Value.TransformBy(ucs);
+            Point3d localTR_WCS = trRes.Value.TransformBy(ucs);
+
+            // Compute uniform scale + rotation to map SCALED → MASTER
+            Vector3d localVec = localTR_WCS - localTL_WCS;
             Vector3d masterVec = masterTopRight - masterTopLeft;
 
-            double localLen = Math.Sqrt(localVec.X * localVec.X + localVec.Y * localVec.Y);
-            double masterLen = Math.Sqrt(masterVec.X * masterVec.X + masterVec.Y * masterVec.Y);
-
-            if (localLen < 1e-6 || masterLen < 1e-6)
+            double localLen = localVec.Length;
+            double masterLen = masterVec.Length;
+            if (localLen < 1e-9 || masterLen < 1e-9)
             {
-                ed.WriteMessage("\nPUSHRESS: Corner picks are degenerate.");
+                ed.WriteMessage("\nPUSHRESS: Degenerate corner picks.");
                 return;
             }
 
-            double scale = masterLen / localLen;
+            double scaleFactor = masterLen / localLen;
             double angleLocal = Math.Atan2(localVec.Y, localVec.X);
             double angleMaster = Math.Atan2(masterVec.Y, masterVec.X);
             double angleDelta = angleMaster - angleLocal;
 
-            Point3d projectedTopRight = TransformScaledPoint(localTopRight, localTopLeft, masterTopLeft, scale, angleDelta);
-            double transformError = projectedTopRight.DistanceTo(new Point3d(masterTopRight.X, masterTopRight.Y, 0));
-            if (transformError > TRANSFORM_VALIDATION_TOL)
+            // Validate against master TR
+            Point3d projectedTR = TransformScaledPoint(localTR_WCS, localTL_WCS, masterTopLeft, scaleFactor, angleDelta);
+            double trErr = projectedTR.DistanceTo(new Point3d(masterTopRight.X, masterTopRight.Y, 0));
+            if (trErr > TRANSFORM_VALIDATION_TOL)
             {
-                ed.WriteMessage($"\nPUSHRESS: Selected corners do not match master geometry (error {transformError:F2} m).");
+                ed.WriteMessage($"\nPUSHRESS: Corner picks don’t align with master top edge (err {trErr:F3} m > tol {TRANSFORM_VALIDATION_TOL:F3} m).");
                 return;
             }
 
-            var selOpts = new PromptSelectionOptions
-            {
-                MessageForAdding = "\nSelect residence points/blocks to push (scaled): "
-            };
-            var filter = new SelectionFilter(new[]
-            {
-                new TypedValue((int)DxfCode.Start, "POINT,INSERT")
-            });
+            ed.WriteMessage($"\nPUSHRESS: using scale={scaleFactor:F6}, rot={(angleDelta * 180.0 / Math.PI):F3}°, TR err={trErr:F3} m.");
 
-            var sel = ed.GetSelection(selOpts, filter);
+            // 6) Select residence inputs (POINT/INSERT) from the SCALED drawing
+            var sel = ed.GetSelection(
+                new PromptSelectionOptions { MessageForAdding = "\nSelect residence points/blocks to push (scaled): " },
+                new SelectionFilter(new[] { new TypedValue((int)DxfCode.Start, "POINT,INSERT") })
+            );
             if (sel.Status != PromptStatus.OK || sel.Value == null || sel.Value.Count == 0)
             {
                 ed.WriteMessage("\nPUSHRESS: Nothing selected.");
                 return;
             }
 
-            var transformed = new List<Point3d>();
+            // 7) Map selected insertion/base points from SCALED (WCS) → MASTER (WCS)
+            var mapped = new List<Point3d>();
             using (Transaction tr = doc.TransactionManager.StartTransaction())
             {
                 foreach (SelectedObject so in sel.Value)
                 {
                     if (so?.ObjectId.IsNull != false) continue;
                     var ent = tr.GetObject(so.ObjectId, DbOpenMode.ForRead) as Entity;
-                    Point3d? candidate = null;
-                    if (ent is DBPoint dp)
-                        candidate = dp.Position;
-                    else if (ent is BlockReference br)
-                        candidate = br.Position;
 
-                    if (candidate.HasValue)
-                    {
-                        var mapped = TransformScaledPoint(candidate.Value, localTopLeft, masterTopLeft, scale, angleDelta);
-                        if (PointInPolygon2D(rec.verts, mapped.X, mapped.Y))
-                        {
-                            transformed.Add(mapped);
-                        }
-                    }
+                    Point3d? p = null;
+                    if (ent is DBPoint dp) p = dp.Position;      // WCS
+                    else if (ent is BlockReference b) p = b.Position;      // WCS
+                    if (!p.HasValue) continue;
+
+                    mapped.Add(TransformScaledPoint(p.Value, localTL_WCS, masterTopLeft, scaleFactor, angleDelta));
                 }
                 tr.Commit();
             }
 
-            if (transformed.Count == 0)
+            if (mapped.Count == 0)
             {
-                ed.WriteMessage("\nPUSHRESS: No selected points mapped inside the requested section.");
+                ed.WriteMessage("\nPUSHRESS: No usable points from selection.");
                 return;
             }
 
-            int written = UpsertPointsInMasterForSection(key, rec.verts, transformed, out int replaced);
-            ed.WriteMessage($"\nPUSHRESS: Added {written} point(s) in master for {key}.");
-            if (replaced > 0)
-                ed.WriteMessage($"\nPUSHRESS: Replaced {replaced} existing residence(s) within {REPLACE_TOL:F2} m.");
+            // 8) Upsert into master (move within 3 m, else insert new)
+            var result = UpsertResidencesInMaster(mapped);
+            ed.WriteMessage($"\nPUSHRESS: Upsert complete — moved {result.moved}, inserted {result.inserted}. Master file saved.");
+        }
+        // Treat “inside OR on boundary within tol” as inside.
+        // Treat “inside OR on boundary within tol” as inside.
+
+        private static double PointToSegDist2(double px, double py,
+                                              double ax, double ay,
+                                              double bx, double by)
+        {
+            double vx = bx - ax, vy = by - ay;
+            double wx = px - ax, wy = py - ay;
+
+            double c1 = vx * wx + vy * wy;
+            if (c1 <= 0.0) return (px - ax) * (px - ax) + (py - ay) * (py - ay);
+
+            double c2 = vx * vx + vy * vy;
+            if (c2 <= c1) return (px - bx) * (px - bx) + (py - by) * (py - by);
+
+            double t = c1 / c2;
+            double projx = ax + t * vx;
+            double projy = ay + t * vy;
+            double dx = px - projx, dy = py - projy;
+            return dx * dx + dy * dy;
         }
 
-        // =========================================================================
-        // Master write helper: Add or replace points inside a section automatically
-        // =========================================================================
-        private int UpsertPointsInMasterForSection(SectionKey key, List<Point3d> sectionPoly, List<Point3d> newPoints, out int replaced)
-        {
-            replaced = 0;
-            if (newPoints == null || newPoints.Count == 0) return 0;
 
+        // Upsert all mapped points into Master_Residences.dwg:
+        // - If an existing residence (DBPOINT or recognized block) is within REPLACE_TOL (3 m), move it to the new location.
+        // - Otherwise insert a new DBPOINT on Z-RESIDENCE.
+        // - DBPOINTs are accepted regardless of layer (no layer gating). Blocks are filtered by RES_BLOCK_NAMES.
+        // Returns (#moved, #inserted). Requires the master DWG to be CLOSED.
+        private (int moved, int inserted) UpsertResidencesInMaster(IEnumerable<Point3d> mappedPoints)
+        {
             // Ensure target DWG exists
             if (!File.Exists(MASTER_POINTS_PATH))
             {
                 using (var newDb = new Database(true, true))
-                {
                     newDb.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
-                }
             }
 
-            // Dedup new points set itself
-            newPoints = DeduplicateList(newPoints, DEDUPE_TOL);
+            // Deduplicate input set (avoid pushing multiple times for the same spot)
+            var uniqueTargets = DeduplicateList(mappedPoints.ToList(), DEDUPE_TOL);
 
-            int appended = 0;
-            using (var masterDb = new Database(false, true))
+            int moved = 0, inserted = 0;
+
+            using (var db = new Database(false, true))
             {
-                masterDb.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
-                masterDb.CloseInput(true);
+                db.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                db.CloseInput(true);
 
-                using (Transaction tr = masterDb.TransactionManager.StartTransaction())
+                using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    EnsureLayer(masterDb, RESIDENCE_LAYER, tr);
+                    EnsureLayer(db, RESIDENCE_LAYER, tr);
 
-                    var lt = (LayerTable)tr.GetObject(masterDb.LayerTableId, DbOpenMode.ForRead);
+                    var lt = (LayerTable)tr.GetObject(db.LayerTableId, DbOpenMode.ForRead);
                     ObjectId resLayerId = lt[RESIDENCE_LAYER];
 
-                    var bt = (BlockTable)tr.GetObject(masterDb.BlockTableId, DbOpenMode.ForRead);
+                    var bt = (BlockTable)tr.GetObject(db.BlockTableId, DbOpenMode.ForRead);
                     var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForWrite);
 
-                    // Collect existing points (for replace or dedupe)
-                    var existing = new List<(ObjectId id, Point3d pos)>();
+                    // Collect existing residences
+                    var existing = new List<(ObjectId id, Point3d pos, bool isBlock)>();
                     foreach (ObjectId id in ms)
                     {
                         var ent = tr.GetObject(id, DbOpenMode.ForRead) as Entity;
+                        if (ent == null) continue;
+
                         if (ent is DBPoint dp)
-                            existing.Add((id, dp.Position));
+                        {
+                            // No layer check — include all DBPOINTs
+                            existing.Add((id, dp.Position, false));
+                        }
                         else if (ent is BlockReference br)
-                            existing.Add((id, br.Position));
+                        {
+                            string name = GetEffectiveBlockName(br, tr);
+                            if (!RES_BLOCK_NAMES.Contains(name)) continue;   // avoid moving non-res blocks
+                            existing.Add((id, br.Position, true));
+                        }
                     }
 
-                    var existingInside = existing
-                        .Select(e => (e.id, e.pos, inside: PointInPolygon2D(sectionPoly, e.pos.X, e.pos.Y)))
-                        .Where(e => e.inside)
-                        .Select(e => (e.id, e.pos))
-                        .ToList();
+                    var existingPts = existing.Select(e => e.pos).ToList();
 
-                    // Build a quick dedupe set over existing inside this section
-                    var existingPts = existingInside.Select(e => e.pos).ToList();
-
-                    foreach (var p in newPoints)
+                    foreach (var p in uniqueTargets)
                     {
-                        // Safety: ensure still inside the section
-                        if (!PointInPolygon2D(sectionPoly, p.X, p.Y)) continue;
-
-                        int idxNear = FindNearIndex(existingPts, p, REPLACE_TOL);
-                        if (idxNear >= 0)
+                        int idx = FindNearIndex(existingPts, p, REPLACE_TOL);
+                        if (idx >= 0)
                         {
-                            var ex = existingInside[idxNear];
-                            var obj = tr.GetObject(ex.id, DbOpenMode.ForWrite, false);
-                            obj.Erase();
-                            replaced++;
-                            existingInside.RemoveAt(idxNear);
-                            existingPts.RemoveAt(idxNear);
-                        }
-                        else if (HasNear(existingPts, p, DEDUPE_TOL))
-                        {
-                            continue;
-                        }
+                            // Move the matched existing and remove it from the candidate pool (one-to-one mapping)
+                            var ex = existing[idx];
+                            var entW = tr.GetObject(ex.id, DbOpenMode.ForWrite) as Entity;
 
-                        var dbp = new DBPoint(p) { LayerId = resLayerId };
-                        ms.AppendEntity(dbp); tr.AddNewlyCreatedDBObject(dbp, true);
-                        appended++;
-                        existingInside.Add((dbp.ObjectId, p));
-                        existingPts.Add(p);
+                            if (entW is DBPoint dpW)
+                            {
+                                dpW.Position = p;
+                            }
+                            else if (entW is BlockReference brW)
+                            {
+                                Vector3d d = p - brW.Position;
+                                if (!d.IsZeroLength()) brW.TransformBy(Matrix3d.Displacement(d));
+                            }
+
+                            // consume this existing so it won't be matched again
+                            existing.RemoveAt(idx);
+                            existingPts.RemoveAt(idx);
+                            moved++;
+                        }
+                        else
+                        {
+                            var dbp = new DBPoint(p) { LayerId = resLayerId };
+                            ms.AppendEntity(dbp); tr.AddNewlyCreatedDBObject(dbp, true);
+                            inserted++;
+                        }
                     }
 
                     tr.Commit();
                 }
 
-                masterDb.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
+                // Save back
+                var fi = new FileInfo(MASTER_POINTS_PATH);
+                if (fi.Exists && fi.IsReadOnly) fi.IsReadOnly = false;
+                db.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
             }
 
-            return appended;
+            return (moved, inserted);
         }
 
         // =========================================================================
@@ -937,6 +887,11 @@ namespace ResidenceSync
             }
 
             ed.Regen();
+        }
+        // ---- NEW: simple open-file guard ----
+        private bool IsMasterPointsOpen()
+        {
+            return GetOpenDocumentByPath(AcadApp.DocumentManager, MASTER_POINTS_PATH) != null;
         }
 
         // =========================================================================
@@ -1211,30 +1166,6 @@ namespace ResidenceSync
         }
 
 
-        // Pick the median existing vertex by coordinate (X for top/bottom, Y for left/right).
-        private static Point3d ChainMedianVertexByCoord(List<Point3d> verts, ChainInfo ch, bool sortByX)
-        {
-            var idxs = ChainVertexIndices(ch, verts.Count).ToList();
-            if (idxs.Count == 0) return verts[0];
-
-            var ordered = sortByX
-                ? idxs.OrderBy(i => verts[i].X).ToList()
-                : idxs.OrderBy(i => verts[i].Y).ToList();
-
-            int mid = ordered.Count / 2;
-            // If only two, choose nearer to the chain center coordinate
-            if (ordered.Count == 2)
-            {
-                double c = sortByX
-                    ? 0.5 * (verts[ordered[0]].X + verts[ordered[1]].X)
-                    : 0.5 * (verts[ordered[0]].Y + verts[ordered[1]].Y);
-                int pick = (Math.Abs((sortByX ? verts[ordered[0]].X : verts[ordered[0]].Y) - c) <=
-                            Math.Abs((sortByX ? verts[ordered[1]].X : verts[ordered[1]].Y) - c))
-                            ? ordered[0] : ordered[1];
-                return verts[pick];
-            }
-            return verts[ordered[mid]];
-        }
 
         // Returns the middle existing vertex (median-by-coordinate) from each true side chain.
         private static bool TryGetQuarterAnchorsByEdgeMedianVertexChain(
@@ -1376,93 +1307,7 @@ namespace ResidenceSync
             return true;
         }
 
-        private static List<ChainInfo> BuildChainsDetailed(
-            List<EdgeInfo> edges, Vector3d primary, Vector3d ortho, double cosTol)
-        {
-            var chains = new List<ChainInfo>();
-            bool inChain = false;
-            int start = -1;
-            double sumProj = 0.0;
-            int cnt = 0;
-            double totLen = 0.0;
 
-            for (int i = 0; i < edges.Count; i++)
-            {
-                EdgeInfo e = edges[i];
-                bool ok = Math.Abs(e.U.DotProduct(primary)) >= cosTol;
-                if (ok)
-                {
-                    if (!inChain)
-                    {
-                        inChain = true;
-                        start = e.Index;
-                        sumProj = 0.0;
-                        cnt = 0;
-                        totLen = 0.0;
-                    }
-                    sumProj += (e.Mid - Point3d.Origin).DotProduct(ortho);
-                    cnt++;
-                    totLen += e.Len;
-                }
-                else
-                {
-                    if (inChain)
-                    {
-                        chains.Add(new ChainInfo
-                        {
-                            Start = start,
-                            SegCount = cnt,
-                            Score = (cnt > 0 ? sumProj / cnt : 0.0),
-                            TotalLen = totLen
-                        });
-                        inChain = false;
-                    }
-                }
-            }
-            if (inChain)
-            {
-                chains.Add(new ChainInfo
-                {
-                    Start = start,
-                    SegCount = cnt,
-                    Score = (cnt > 0 ? sumProj / cnt : 0.0),
-                    TotalLen = totLen
-                });
-            }
-
-            // Merge wrap-around contiguous chains (last + first)
-            if (chains.Count >= 2)
-            {
-                ChainInfo first = chains[0];
-                ChainInfo last = chains[chains.Count - 1];
-
-                // last ends at (last.Start + last.SegCount) == edges.Count
-                if (first.Start == 0 && (last.Start + last.SegCount == edges.Count))
-                {
-                    int totalSeg = last.SegCount + first.SegCount;
-                    double totalLen = last.TotalLen + first.TotalLen;
-                    double avgScore = 0.0;
-                    if (totalSeg > 0)
-                        avgScore = (last.Score * last.SegCount + first.Score * first.SegCount) / totalSeg;
-
-                    var merged = new ChainInfo { Start = last.Start, SegCount = totalSeg, Score = avgScore, TotalLen = totalLen };
-                    chains[0] = merged;
-                    chains.RemoveAt(chains.Count - 1);
-                }
-            }
-            return chains;
-        }
-
-        // Middle vertex index for a chain: Start + floor((SegCount+1)/2)
-        private static Point3d ChainMiddleVertex(List<Point3d> verts, ChainInfo ch)
-        {
-            int n = verts.Count;
-            if (ch.SegCount <= 0) return verts[0];
-
-            int step = (ch.SegCount + 1) / 2; // integer division (floor)
-            int idx = (ch.Start + step) % n;  // vertex index along ring
-            return verts[idx];
-        }
 
         // Recognized residence block names in the master (case-insensitive).
         private static readonly HashSet<string> RES_BLOCK_NAMES =
@@ -1541,9 +1386,6 @@ namespace ResidenceSync
                              insertCenter.Y - centerMm.Y * unitsPerMetre, 0));
             return scaleAboutCenter * postShift;
         }
-
-
-        // ---------------- JSONL reader + helpers ----------------
 
         private struct VertexIndexRecord
         {
@@ -1792,26 +1634,96 @@ namespace ResidenceSync
 
         // --------- Geometry & utilities ---------
 
-        private bool TryGetSectionTopCorners(List<Point3d> poly, out Point3d topLeft, out Point3d topRight)
+        // Robustly find TOP-LEFT (NW) and TOP-RIGHT (NE) corners of the master section.
+        // Works even when the top edge has a slight slope and vertex spacing is irregular.
+        // Robustly find TOP-LEFT (NW) and TOP-RIGHT (NE) corners of the master section.
+        // Works even when the top edge has a slight slope and vertex spacing is irregular.
+        private bool TryGetSectionTopCorners(List<Point3d> verts, out Point3d topLeft, out Point3d topRight)
         {
             topLeft = topRight = Point3d.Origin;
-            if (poly == null || poly.Count < 2) return false;
+            if (verts == null || verts.Count < 3) return false;
 
-            double maxY = poly.Max(p => p.Y);
-            const double candidateTol = 0.05; // 5 cm window for the "top" edge
-
-            var candidates = poly.Where(p => (maxY - p.Y) <= candidateTol).ToList();
-            if (candidates.Count < 2)
+            // Build edges
+            int n = verts.Count;
+            var edges = new List<EdgeInfo>(n);
+            for (int i = 0; i < n; i++)
             {
-                candidates = poly.OrderByDescending(p => p.Y).Take(2).ToList();
-                if (candidates.Count < 2) return false;
+                Point3d a = verts[i];
+                Point3d b = verts[(i + 1) % n];
+                Vector3d v = b - a;
+                double len = v.Length;
+                if (len <= 1e-9) continue;
+                Vector3d u = new Vector3d(v.X / len, v.Y / len, 0);
+                Point3d mid = new Point3d((a.X + b.X) * 0.5, (a.Y + b.Y) * 0.5, 0);
+                edges.Add(new EdgeInfo { Index = i, A = a, B = b, U = u, Mid = mid, Len = len });
+            }
+            if (edges.Count == 0) return false;
+
+            // Choose a near-horizontal edge with highest average Y; fallback = longest edge.
+            const double degTol = 15.0;
+            double cosTol = Math.Cos(degTol * Math.PI / 180.0);
+            EdgeInfo topEdge = default(EdgeInfo);
+            double bestTopY = double.MinValue;
+            foreach (var e in edges)
+            {
+                double horiz = Math.Abs(e.U.DotProduct(Vector3d.XAxis));
+                double avgY = (e.A.Y + e.B.Y) * 0.5;
+                if (horiz >= cosTol && avgY > bestTopY) { bestTopY = avgY; topEdge = e; }
+            }
+            if (bestTopY == double.MinValue)
+                topEdge = edges.OrderByDescending(e => e.Len).First();
+
+            // Local axes: EAST along the top edge, NORTH perpendicular
+            Vector3d east = topEdge.U.GetNormal();
+            if (east.Length <= 1e-12) return false;
+            Vector3d north = east.RotateBy(Math.PI / 2.0, Vector3d.ZAxis).GetNormal();
+
+            // Extents & band tolerance (2 m or 0.5% of the larger span)
+            double minE = double.MaxValue, maxE = double.MinValue;
+            double minN = double.MaxValue, maxN = double.MinValue;
+            foreach (var v in verts)
+            {
+                double pe = AxisProj(v, east);
+                double pn = AxisProj(v, north);
+                if (pe < minE) minE = pe; if (pe > maxE) maxE = pe;
+                if (pn < minN) minN = pn; if (pn > maxN) maxN = pn;
+            }
+            double spanE = Math.Max(1e-6, maxE - minE);
+            double spanN = Math.Max(1e-6, maxN - minN);
+            double bandTol = Math.Max(2.0, 0.005 * Math.Max(spanE, spanN));
+
+            // Build east-west chains and pick the one touching the top band
+            var eChains = BuildChainsClosest(edges, east, north);
+            if (eChains.Count == 0) return false;
+
+            bool TouchesTop(ChainInfo ch)
+            {
+                foreach (int idx in ChainVertexIndices(ch, n))
+                    if (maxN - AxisProj(verts[idx], north) <= bandTol)
+                        return true;
+                return false;
             }
 
-            candidates.Sort((a, b) => a.X.CompareTo(b.X));
-            topLeft = candidates.First();
-            topRight = candidates.Last();
+            ChainInfo topChain = eChains
+                .Where(TouchesTop)
+                .OrderByDescending(c => c.Score)       // most "northern"
+                .ThenByDescending(c => c.TotalLen)     // tie-break by length
+                .DefaultIfEmpty(eChains.OrderByDescending(c => c.Score).ThenByDescending(c => c.TotalLen).First())
+                .First();
 
-            return topLeft.DistanceTo(topRight) > 1e-6;
+            // The corners are the min/max EAST vertices along that top chain
+            int leftIdx = topChain.Start % n, rightIdx = leftIdx;
+            double bestLeftE = double.MaxValue, bestRightE = double.MinValue;
+            foreach (int idx in ChainVertexIndices(topChain, n))
+            {
+                double pe = AxisProj(verts[idx], east);
+                if (pe < bestLeftE) { bestLeftE = pe; leftIdx = idx; }
+                if (pe > bestRightE) { bestRightE = pe; rightIdx = idx; }
+            }
+
+            topLeft = verts[leftIdx];
+            topRight = verts[rightIdx];
+            return true;
         }
 
         private static Point3d TransformScaledPoint(Point3d source, Point3d localOrigin, Point3d masterOrigin, double scale, double rotation)
@@ -1828,7 +1740,7 @@ namespace ResidenceSync
             return new Point3d(mx, my, 0);
         }
 
-        // Simple ray-cast point-in-polygon (2D)
+        // Simple ray-cast point-in-polygon (2D) — correct even/odd test
         private static bool PointInPolygon2D(List<Point3d> poly, double x, double y)
         {
             bool inside = false;
@@ -1838,9 +1750,13 @@ namespace ResidenceSync
                 double xi = poly[i].X, yi = poly[i].Y;
                 double xj = poly[j].X, yj = poly[j].Y;
 
-                bool intersect = ((yi > y) != (yj > y)) &&
-                                 (x < (xj - xi) * (y - yi) / Math.Max(1e-12, (yj - yi)) + xi);
-                if (intersect) inside = !inside;
+                // Only consider edges that straddle the horizontal ray
+                if ((yi > y) != (yj > y))
+                {
+                    // Compute the x coordinate of the intersection
+                    double xint = xi + (y - yi) * (xj - xi) / (yj - yi);
+                    if (x < xint) inside = !inside;
+                }
             }
             return inside;
         }
