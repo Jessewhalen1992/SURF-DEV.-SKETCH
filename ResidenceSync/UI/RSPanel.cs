@@ -88,9 +88,9 @@ namespace ResidenceSync.UI
 
         private string GetScaleSelection()
         {
-            if (comboScale.SelectedItem is string selected)
+            if (comboScale.SelectedItem is string selected && !string.IsNullOrWhiteSpace(selected))
             {
-                return selected == PromptOption ? null : selected;
+                return selected;
             }
 
             return null;
@@ -100,11 +100,6 @@ namespace ResidenceSync.UI
         {
             if (comboSurveyed.SelectedItem is string selected)
             {
-                if (selected == PromptOption)
-                {
-                    return null;
-                }
-
                 return string.Equals(selected, "Surveyed", StringComparison.OrdinalIgnoreCase);
             }
 
@@ -115,11 +110,6 @@ namespace ResidenceSync.UI
         {
             if (comboInsertResidences.SelectedItem is string selected)
             {
-                if (selected == PromptOption)
-                {
-                    return null;
-                }
-
                 return string.Equals(selected, "Yes", StringComparison.OrdinalIgnoreCase);
             }
 
@@ -183,7 +173,7 @@ namespace ResidenceSync.UI
             }
             else
             {
-                SelectComboValue(comboInsertResidences, null);
+                SelectComboValue(comboInsertResidences, "No");
             }
         }
 
@@ -223,7 +213,6 @@ namespace ResidenceSync.UI
             comboScale.Items.Clear();
             comboScale.Items.AddRange(new object[]
             {
-                PromptOption,
                 "50k",
                 "25k",
                 "20k"
@@ -237,12 +226,11 @@ namespace ResidenceSync.UI
             comboSurveyed.Items.Clear();
             comboSurveyed.Items.AddRange(new object[]
             {
-                PromptOption,
                 "Surveyed",
                 "Unsurveyed"
             });
 
-            comboSurveyed.SelectedIndex = comboSurveyed.FindStringExact(PromptOption);
+            SelectComboValue(comboSurveyed, "Surveyed");
         }
 
         private void InitializeInsertResidencesOptions()
@@ -250,7 +238,6 @@ namespace ResidenceSync.UI
             comboInsertResidences.Items.Clear();
             comboInsertResidences.Items.AddRange(new object[]
             {
-                PromptOption,
                 "Yes",
                 "No"
             });
@@ -262,14 +249,13 @@ namespace ResidenceSync.UI
         {
             if (string.IsNullOrEmpty(value))
             {
-                var promptIndex = comboBox.FindStringExact(PromptOption);
-                if (promptIndex >= 0)
-                {
-                    comboBox.SelectedIndex = promptIndex;
-                }
-                else if (comboBox.Items.Count > 0)
+                if (comboBox.Items.Count > 0)
                 {
                     comboBox.SelectedIndex = 0;
+                }
+                else
+                {
+                    comboBox.SelectedIndex = -1;
                 }
                 return;
             }
@@ -284,7 +270,5 @@ namespace ResidenceSync.UI
                 comboBox.SelectedIndex = 0;
             }
         }
-
-        private const string PromptOption = "Prompt";
     }
 }

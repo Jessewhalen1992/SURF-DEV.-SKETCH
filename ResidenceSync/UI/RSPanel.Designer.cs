@@ -58,22 +58,24 @@ namespace ResidenceSync.UI
             this.tableLayoutMain.Location = new System.Drawing.Point(0, 0);
             this.tableLayoutMain.Name = "tableLayoutMain";
             this.tableLayoutMain.RowCount = 3;
-            this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            this.tableLayoutMain.RowStyles.Clear();
+            this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
             this.tableLayoutMain.Size = new System.Drawing.Size(320, 200);
             this.tableLayoutMain.TabIndex = 0;
-            // 
+            //
             // groupSurfDev
-            // 
-            this.groupSurfDev.AutoSize = true;
-            this.groupSurfDev.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            //
+            this.groupSurfDev.AutoSize = false;
+            this.groupSurfDev.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowOnly;
             this.groupSurfDev.Controls.Add(this.tableSurfDev);
             this.groupSurfDev.Dock = System.Windows.Forms.DockStyle.Fill;
             this.groupSurfDev.Location = new System.Drawing.Point(3, 3);
             this.groupSurfDev.Name = "groupSurfDev";
             this.groupSurfDev.Padding = new System.Windows.Forms.Padding(8, 6, 8, 8);
             this.groupSurfDev.Size = new System.Drawing.Size(314, 273);
+            this.groupSurfDev.MinimumSize = new System.Drawing.Size(360, 220);
             this.groupSurfDev.TabIndex = 0;
             this.groupSurfDev.TabStop = false;
             this.groupSurfDev.Text = "SURFDEV Options";
@@ -249,12 +251,14 @@ namespace ResidenceSync.UI
             // labelInsertResidences
             //
             this.labelInsertResidences.Anchor = System.Windows.Forms.AnchorStyles.Left;
-            this.labelInsertResidences.AutoSize = true;
+            this.labelInsertResidences.AutoSize = false;
             this.labelInsertResidences.Location = new System.Drawing.Point(3, 219);
             this.labelInsertResidences.Name = "labelInsertResidences";
             this.labelInsertResidences.Size = new System.Drawing.Size(101, 15);
             this.labelInsertResidences.TabIndex = 14;
             this.labelInsertResidences.Text = "Insert residences";
+            this.labelInsertResidences.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.labelInsertResidences.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             //
             // comboInsertResidences
             //
@@ -321,11 +325,12 @@ namespace ResidenceSync.UI
             // lblStatus
             // 
             this.lblStatus.AutoEllipsis = true;
-            this.lblStatus.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.lblStatus.AutoSize = true;
+            this.lblStatus.Dock = System.Windows.Forms.DockStyle.Top;
             this.lblStatus.Location = new System.Drawing.Point(3, 318);
-            this.lblStatus.Margin = new System.Windows.Forms.Padding(3, 0, 3, 3);
+            this.lblStatus.Margin = new System.Windows.Forms.Padding(3, 3, 3, 3);
             this.lblStatus.Name = "lblStatus";
-            this.lblStatus.Size = new System.Drawing.Size(314, 82);
+            this.lblStatus.Size = new System.Drawing.Size(314, 15);
             this.lblStatus.TabIndex = 2;
             this.lblStatus.Text = "Ready";
             this.lblStatus.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
