@@ -1,7 +1,9 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Autodesk.AutoCAD.Runtime;
+using ResidenceSync.UI;
 [assembly: CommandClass(typeof(ResidenceSync.ResidenceSyncCommands))]
+[assembly: CommandClass(typeof(RSUiCommands))]
 
 [assembly: AssemblyTitle("ResidenceSync")]
 [assembly: AssemblyDescription("Residence synchronization tools for AutoCAD.")]
