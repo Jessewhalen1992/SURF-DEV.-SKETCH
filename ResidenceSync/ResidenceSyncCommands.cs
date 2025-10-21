@@ -18,6 +18,8 @@ using DbOpenMode = Autodesk.AutoCAD.DatabaseServices.OpenMode;
 using OdDataType = Autodesk.Gis.Map.Constants.DataType;
 using OdOpenMode = Autodesk.Gis.Map.Constants.OpenMode;
 using OdTable = Autodesk.Gis.Map.ObjectData.Table;
+using Autodesk.Gis.Map.Project; // for ProjectModel
+
 
 namespace ResidenceSync
 {
@@ -34,16 +36,47 @@ namespace ResidenceSync
         private const double ERASE_TOL = 0.001;  // polygon test epsilon (ray-cast denom guard)
         private const double TRANSFORM_VALIDATION_TOL = 0.75; // scaled push must align within < 1 m
 
+
+        // ----- OD field alias sets (used for reading/writing across mixed tables) -----
+        private static readonly string[] JOB_ALIASES = { "JOB_NUM", "JOBNUM", "JOB", "JOB_NUMBER" };
+        private static readonly string[] DESC_ALIASES = { "DESCRIPTION", "DESC", "DESCRIP", "DESCR" };
+        private static readonly string[] NOTES_ALIASES = { "NOTES", "NOTE", "COMMENTS", "COMMENT", "REMARKS" };
+
+
+
         // Recognized residence block names (case-insensitive)
         private static readonly HashSet<string> RES_BLOCK_NAMES =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "res_other", "res_occ", "res_abd", "AS-RESIDENCE", "RES_OTHER", "RES_OCC", "RES_ABD" };
 
-        // OD table(s): we will read from any of these; if we must create one, we create Block:res_other
-        private static readonly string[] RES_OD_TABLE_NAMES =
-            { "Block:res_other", "Block:res_occ", "Block:res_abd" };
-
+        // Canonical residence OD table names (use the colon form)
+        private const string RES_OD_CREATE_DEFAULT = "Block:res_other";
         private const string RES_OD_PRIMARY_TABLE = "Block:res_other";
+
+
+
+        private static ObjectId EnsureLayerGetId(Database db, string layerName, Transaction tr)
+        {
+            var lt = (LayerTable)tr.GetObject(db.LayerTableId, DbOpenMode.ForRead);
+            if (!lt.Has(layerName))
+            {
+                lt.UpgradeOpen();
+                var ltr = new LayerTableRecord { Name = layerName };
+                lt.Add(ltr);
+                tr.AddNewlyCreatedDBObject(ltr, true);
+                return ltr.ObjectId;
+            }
+            return lt[layerName];
+        }
+
+        // Normalizes table name for comparison: lower-case, remove any ':' after "block"
+        private static string NormOdTableName(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+            s = s.Trim();
+            if (s.StartsWith("OD:", StringComparison.OrdinalIgnoreCase)) s = s.Substring(3);
+            return s; // keep “Block:res_other” distinct from “Blockres_other”
+        }
 
         // =========================================================================
         // RESINDEXV — Build vertex index (JSONL) from Master_Sections.dwg
@@ -386,12 +419,13 @@ namespace ResidenceSync
                         doc.Database.WblockCloneObjects(srcIds, ms.ObjectId, idMap, DuplicateRecordCloning.Replace, false);
 
                         // Force cloned items onto Z-RESIDENCE
+                        ObjectId resLayerId = ForceLayerVisible(doc.Database, RESIDENCE_LAYER, tr);
                         foreach (IdPair p in idMap)
                         {
                             if (!p.IsCloned) continue;
                             var ent = tr.GetObject(p.Value, DbOpenMode.ForWrite) as Entity;
                             if (ent == null) continue;
-                            ent.Layer = RESIDENCE_LAYER;
+                            ent.LayerId = resLayerId; // safer than name
                             inserted++;
                         }
                     }
@@ -411,17 +445,14 @@ namespace ResidenceSync
             if (doc == null) return;
             var ed = doc.Editor;
 
-            // guard: master must be closed
             if (IsMasterPointsOpen())
             {
                 ed.WriteMessage("\nPUSHRESS: 'Master_Residences.dwg' is open. Close it and try again.");
                 return;
             }
 
-            // section key (only for top-edge reference)
             if (!PromptSectionKey(ed, out SectionKey key)) return;
 
-            // read master section for anchor corners
             string idxPath = Path.Combine(Path.GetDirectoryName(MASTER_SECTIONS_PATH) ?? "",
                                           "Master_Sections.index.jsonl");
             if (!TryReadSectionFromJsonl(idxPath, key, out VertexIndexRecord rec))
@@ -436,10 +467,8 @@ namespace ResidenceSync
                 return;
             }
 
-            // Pick TL/TR on the scaled linework (in UCS)
             var tlRes = ed.GetPoint(new PromptPointOptions("\nPick TOP LEFT of the section in scaled linework: ") { AllowNone = false });
             if (tlRes.Status != PromptStatus.OK) return;
-
             var trRes = ed.GetPoint(new PromptPointOptions("\nPick TOP RIGHT of the section in scaled linework: ")
             {
                 UseBasePoint = true,
@@ -448,23 +477,21 @@ namespace ResidenceSync
             });
             if (trRes.Status != PromptStatus.OK) return;
 
-            // UCS -> WCS, build similarity transform
-            Matrix3d ucs = ed.CurrentUserCoordinateSystem;
-            Point3d localTL = tlRes.Value.TransformBy(ucs);
-            Point3d localTR = trRes.Value.TransformBy(ucs);
+            Matrix3d ucsToWcs = ed.CurrentUserCoordinateSystem.Inverse();
+            Point3d localTL_W = tlRes.Value.TransformBy(ucsToWcs);
+            Point3d localTR_W = trRes.Value.TransformBy(ucsToWcs);
 
-            Vector3d vLocal = localTR - localTL;
+            Vector3d vLocalW = localTR_W - localTL_W;
             Vector3d vMaster = masterTopRight - masterTopLeft;
-            double lenLocal = vLocal.Length, lenMaster = vMaster.Length;
+            double lenLocal = vLocalW.Length, lenMaster = vMaster.Length;
             if (lenLocal < 1e-9 || lenMaster < 1e-9) { ed.WriteMessage("\nPUSHRESS: Degenerate corner picks."); return; }
 
             double scale = lenMaster / lenLocal;
-            double angLocal = Math.Atan2(vLocal.Y, vLocal.X);
-            double angMaster = Math.Atan2(vMaster.Y, vMaster.X);
-            double dTheta = angMaster - angLocal;
+            double angLoc = Math.Atan2(vLocalW.Y, vLocalW.X);
+            double angMas = Math.Atan2(vMaster.Y, vMaster.X);
+            double dTheta = angMas - angLoc;
 
-            // verify TR alignment
-            Point3d trProjected = TransformScaledPoint(localTR, localTL, masterTopLeft, scale, dTheta);
+            Point3d trProjected = TransformScaledPoint(localTR_W, localTL_W, masterTopLeft, scale, dTheta);
             double err = trProjected.DistanceTo(new Point3d(masterTopRight.X, masterTopRight.Y, 0));
             if (err > TRANSFORM_VALIDATION_TOL)
             {
@@ -473,7 +500,6 @@ namespace ResidenceSync
             }
             ed.WriteMessage($"\nPUSHRESS: using scale={scale:F6}, rot={(dTheta * 180.0 / Math.PI):F3}°, TR err={err:F3} m.");
 
-            // Select residence inputs (BLOCKS strongly preferred; legacy DBPOINTs allowed -> default to res_other)
             var sel = ed.GetSelection(
                 new PromptSelectionOptions { MessageForAdding = "\nSelect residence blocks to push (res_other/res_occ/res_abd): " },
                 new SelectionFilter(new[] { new TypedValue((int)DxfCode.Start, "INSERT,POINT") })
@@ -486,491 +512,18 @@ namespace ResidenceSync
 
             string jobFromThisDwg = Path.GetFileNameWithoutExtension(doc.Name) ?? "";
 
-            // Collect push items from selection (read OD; prompt to auto-attach if missing)
-            List<PushItem> items = CollectPushItemsFromSelection(doc, sel.Value, localTL, masterTopLeft, scale, dTheta,
-                                                                 jobFromThisDwg, out int missingOdCount);
+            // Build items (attributes only)
+            var items = CollectPushItemsFromSelection(
+                doc, sel.Value, localTL_W, masterTopLeft, scale, dTheta, jobFromThisDwg, out int missingAttr, Matrix3d.Identity);
 
-            if (missingOdCount > 0)
-            {
-                var pko = new PromptKeywordOptions($"\n{missingOdCount} selected item(s) have no Object Data. Attach default OD now? [Yes/Cancel]: ")
-                { AllowNone = false };
-                pko.Keywords.Add("Yes"); pko.Keywords.Add("Cancel");
-                pko.Keywords.Default = "Yes";
-                var kr = ed.GetKeywords(pko);
-                if (kr.Status != PromptStatus.OK || kr.StringResult.Equals("Cancel", StringComparison.OrdinalIgnoreCase))
-                    return;
+            if (items.Count == 0) { ed.WriteMessage("\nPUSHRESS: No usable items."); return; }
 
-                // Attach OD on the source selection (in this drawing), then rebuild items (now populated)
-                AutoAttachResidenceOdToSelection(doc, sel.Value, jobFromThisDwg);
-                items = CollectPushItemsFromSelection(doc, sel.Value, localTL, masterTopLeft, scale, dTheta,
-                                                      jobFromThisDwg, out _);
-            }
-
-            if (items.Count == 0)
-            {
-                ed.WriteMessage("\nPUSHRESS: No usable blocks from selection.");
-                return;
-            }
-
-            // Upsert into master (move within 3 m OR insert new), keep OD, update JOB_NUM to current DWG name
             var result = UpsertResidenceBlocksInMaster(items, jobFromThisDwg, ed);
-            ed.WriteMessage($"\nPUSHRESS: Upsert complete — moved {result.moved}, inserted {result.inserted}. Master file saved.");
+            ed.WriteMessage($"\nPUSHRESS: Finished — moved {result.moved}, inserted {result.inserted}. (Attrs only; master saved off-screen.)");
         }
         // Treat “inside OR on boundary within tol” as inside.
-        // Treat “inside OR on boundary within tol” as inside.
 
-        private static double PointToSegDist2(double px, double py,
-                                              double ax, double ay,
-                                              double bx, double by)
-        {
-            double vx = bx - ax, vy = by - ay;
-            double wx = px - ax, wy = py - ay;
 
-            double c1 = vx * wx + vy * wy;
-            if (c1 <= 0.0) return (px - ax) * (px - ax) + (py - ay) * (py - ay);
-
-            double c2 = vx * vx + vy * vy;
-            if (c2 <= c1) return (px - bx) * (px - bx) + (py - by) * (py - by);
-
-            double t = c1 / c2;
-            double projx = ax + t * vx;
-            double projy = ay + t * vy;
-            double dx = px - projx, dy = py - projy;
-            return dx * dx + dy * dy;
-        }
-
-        // What we push for each picked entity
-        private sealed class PushItem
-        {
-            public Point3d Target;           // mapped (master WCS)
-            public string BlockName;         // res_other/res_occ/res_abd (fallback = res_other)
-            public string Desc;              // from OD (manual)
-            public string Notes;             // from OD (manual)
-            public string OdTable;           // table to use when writing (prefer record's table; else primary)
-        }
-
-        // Transform a source WCS point into master WCS
-        private static Point3d MapScaledToMaster(Point3d sourceWcs, Point3d localTL, Point3d masterTL, double scale, double rot)
-            => TransformScaledPoint(sourceWcs, localTL, masterTL, scale, rot);
-
-        // Read OD from an entity (any of the supported tables). Returns true if we found one.
-        private static bool TryReadResidenceOd(Tables tables, ObjectId entId,
-                                               out string job, out string desc, out string notes, out string usedTable)
-        {
-            job = desc = notes = null;
-            usedTable = RES_OD_PRIMARY_TABLE;
-
-            if (tables == null) return false;
-
-            foreach (string tn in RES_OD_TABLE_NAMES)
-            {
-                if (!tables.IsTableDefined(tn)) continue;
-                using (OdTable t = tables[tn])
-                {
-                    var defs = t.FieldDefinitions;
-                    using (Records recs = t.GetObjectTableRecords(0, entId, OdOpenMode.OpenForRead, true))
-                    {
-                        if (recs == null || recs.Count == 0) continue;
-                        foreach (Record r in recs)
-                        {
-                            string j = ReadOd(defs, r, new[] { "JOB_NUM" }, mv => (mv?.StrValue));
-                            string d = ReadOd(defs, r, new[] { "DESCRIPTION" }, mv => (mv?.StrValue));
-                            string n = ReadOd(defs, r, new[] { "NOTES" }, mv => (mv?.StrValue));
-
-                            job = j; desc = d; notes = n; usedTable = tn;
-                            return true;
-                        }
-                    }
-                }
-            }
-            return false;
-        }
-
-        // Ensure OD table exists with the expected schema
-        private static void EnsureResidenceOdTable(Tables tables, string tableName)
-        {
-            if (tables == null) return;
-            if (tables.IsTableDefined(tableName)) return;
-
-            // Define schema: JOB_NUM, DESCRIPTION, NOTES (all Character)
-            FieldDefinitions fdefs = tables.CreateFieldDefinitions();
-            fdefs.Add("JOB_NUM", "Job Number", OdDataType.Character, 0);
-            fdefs.Add("DESCRIPTION", "Description", OdDataType.Character, 0);
-            fdefs.Add("NOTES", "Notes", OdDataType.Character, 0);
-
-            tables.Add(tableName, "Residence Object Data", fdefs);
-        }
-
-        // Attach (or update) OD record for entity
-        private static void AttachOrUpdateResidenceOd(Autodesk.Gis.Map.Project project,
-                                                      ObjectId entId,
-                                                      string tableName,
-                                                      string jobNum,
-                                                      string description,
-                                                      string notes)
-        {
-            if (project == null) return;
-            var tables = project.ODTables;
-            EnsureResidenceOdTable(tables, tableName);
-
-            using (OdTable t = tables[tableName])
-            {
-                var defs = t.FieldDefinitions;
-
-                // Try to get existing
-                Record rec = null;
-                using (Records recs = t.GetObjectTableRecords(0, entId, OdOpenMode.OpenForWrite, true))
-                {
-                    if (recs != null && recs.Count > 0)
-                    {
-                        foreach (Record r in recs) { rec = r; break; }
-                    }
-                }
-
-                bool isNew = (rec == null);
-                if (isNew) rec = t.CreateRecord();
-
-                void setStr(string field, string value)
-                {
-                    // find index by name; create MapValue and assign
-                    for (int i = 0; i < defs.Count; i++)
-                    {
-                        var def = defs[i];
-                        if (!def.Name.Equals(field, StringComparison.OrdinalIgnoreCase)) continue;
-                        var mv = MapValue.Create(OdDataType.Character);
-                        mv.StrValue = value ?? string.Empty;
-                        rec[i] = mv;
-                        break;
-                    }
-                }
-
-                setStr("JOB_NUM", jobNum);
-                if (description != null) setStr("DESCRIPTION", description);
-                if (notes != null) setStr("NOTES", notes);
-
-                if (isNew) t.AddRecord(rec, entId);
-                // else record was opened for write; the assignments above update it in place.
-            }
-        }
-
-        // Set a block attribute (if present) to a value
-        private static void SetBlockAttribute(BlockReference br, string tag, string value)
-        {
-            if (br == null || string.IsNullOrEmpty(tag)) return;
-
-            foreach (ObjectId attId in br.AttributeCollection)
-            {
-                var dbObj = br.Database.TransactionManager.GetObject(attId, DbOpenMode.ForWrite, false) as AttributeReference;
-                if (dbObj == null) continue;
-                if (dbObj.Tag.Equals(tag, StringComparison.OrdinalIgnoreCase))
-                {
-                    dbObj.TextString = value ?? string.Empty;
-                    break;
-                }
-            }
-        }
-
-        // Build push items (reads OD from source; performs the scale/rotate/map)
-        private List<PushItem> CollectPushItemsFromSelection(
-            Document curDoc,
-            SelectionSet sel,
-            Point3d localTL, Point3d masterTL,
-            double scale, double rot,
-            string jobFromThisDwg,
-            out int missingOdCount)
-        {
-            missingOdCount = 0;
-            var items = new List<PushItem>();
-
-            var project = HostMapApplicationServices.Application?.Projects?.GetProject(curDoc);
-            var tables = project?.ODTables;
-
-            using (var tr = curDoc.TransactionManager.StartTransaction())
-            {
-                foreach (SelectedObject so in sel)
-                {
-                    if (so?.ObjectId.IsNull != false) continue;
-                    var ent = tr.GetObject(so.ObjectId, DbOpenMode.ForRead) as Entity;
-                    if (ent == null) continue;
-
-                    Point3d srcPos;
-                    string blockName = "res_other"; // default for legacy points
-
-                    if (ent is BlockReference br)
-                    {
-                        srcPos = br.Position;
-                        blockName = GetEffectiveBlockName(br, tr);
-                        if (!RES_BLOCK_NAMES.Contains(blockName))
-                        {
-                            // Not one of our residence blocks; skip silently
-                            continue;
-                        }
-                    }
-                    else if (ent is DBPoint dp)
-                    {
-                        srcPos = dp.Position;
-                        // treat as res_other on insert
-                    }
-                    else continue;
-
-                    // Read OD if present
-                    string job = null, desc = null, notes = null, tableUsed = RES_OD_PRIMARY_TABLE;
-                    bool hasOd = TryReadResidenceOd(tables, ent.ObjectId, out job, out desc, out notes, out tableUsed);
-
-                    if (!hasOd) missingOdCount++;
-
-                    // Map to master
-                    Point3d target = MapScaledToMaster(srcPos, localTL, masterTL, scale, rot);
-
-                    items.Add(new PushItem
-                    {
-                        Target = target,
-                        BlockName = blockName,
-                        Desc = desc,            // manual fields as found (could be null)
-                        Notes = notes,
-                        OdTable = hasOd ? tableUsed : RES_OD_PRIMARY_TABLE
-                    });
-                }
-                tr.Commit();
-            }
-
-            // Make JOB_NUM uniform to the pushing DWG for all items (per requirement)
-            // (We assign JOB_NUM at write-time via AttachOrUpdateResidenceOd; nothing to set here.)
-            return DeduplicateItems(items, DEDUPE_TOL);
-        }
-
-        // Deduplicate by target location within tolerance
-        private static List<PushItem> DeduplicateItems(List<PushItem> items, double tol)
-        {
-            var outList = new List<PushItem>(items.Count);
-            foreach (var it in items)
-            {
-                bool near = outList.Any(x =>
-                {
-                    double dx = x.Target.X - it.Target.X;
-                    double dy = x.Target.Y - it.Target.Y;
-                    return (dx * dx + dy * dy) <= tol * tol;
-                });
-                if (!near) outList.Add(it);
-            }
-            return outList;
-        }
-
-        // If the selection lacks OD, attach a default record on the *current* drawing
-        private void AutoAttachResidenceOdToSelection(Document curDoc, SelectionSet sel, string jobFromThisDwg)
-        {
-            var project = HostMapApplicationServices.Application?.Projects?.GetProject(curDoc);
-            if (project == null) return;
-
-            using (curDoc.LockDocument())
-            using (var tr = curDoc.TransactionManager.StartTransaction())
-            {
-                var tables = project.ODTables;
-                EnsureResidenceOdTable(tables, RES_OD_PRIMARY_TABLE);
-
-                foreach (SelectedObject so in sel)
-                {
-                    if (so?.ObjectId.IsNull != false) continue;
-                    var ent = tr.GetObject(so.ObjectId, DbOpenMode.ForWrite) as Entity;
-                    if (!(ent is BlockReference br)) continue;
-
-                    // Attach default record if none exists in any supported table
-                    string j, d, n, used;
-                    if (!TryReadResidenceOd(tables, br.ObjectId, out j, out d, out n, out used))
-                    {
-                        // Defaults: JOB_NUM = source DWG; DESCRIPTION="HOUSE"; NOTES=""
-                        AttachOrUpdateResidenceOd(project, br.ObjectId, RES_OD_PRIMARY_TABLE, jobFromThisDwg, "HOUSE", "");
-                        // Also set block attribute if present
-                        SetBlockAttribute(br, "JOB_NUM", jobFromThisDwg);
-                    }
-                }
-                tr.Commit();
-            }
-        }
-
-        // Upsert into Master_Residences.dwg: move if within 3 m, else insert new block.
-        // Also updates OD JOB_NUM (and attribute) to the source DWG name.
-        private (int moved, int inserted) UpsertResidenceBlocksInMaster(List<PushItem> items, string jobFromThisDwg, Editor ed)
-        {
-            _ = ed;
-            int moved = 0, inserted = 0;
-
-            // Ensure master exists
-            if (!File.Exists(MASTER_POINTS_PATH))
-            {
-                using (var newDb = new Database(true, true))
-                    newDb.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
-            }
-
-            var docs = AcadApp.DocumentManager;
-            Document masterDoc = GetOpenDocumentByPath(docs, MASTER_POINTS_PATH);
-            bool openedHere = false;
-            if (masterDoc == null)
-            {
-                masterDoc = docs.Open(MASTER_POINTS_PATH, false);
-                openedHere = true;
-            }
-
-            try
-            {
-                using (masterDoc.LockDocument())
-                using (var tr = masterDoc.TransactionManager.StartTransaction())
-                {
-                    var project = HostMapApplicationServices.Application?.Projects?.GetProject(masterDoc);
-                    var bt = (BlockTable)tr.GetObject(masterDoc.Database.BlockTableId, DbOpenMode.ForRead);
-                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForWrite);
-
-                    EnsureLayer(masterDoc.Database, RESIDENCE_LAYER, tr);
-
-                    // Collect existing (recognized blocks + legacy points)
-                    var existing = new List<(ObjectId id, Point3d pos, bool isBlock)>();
-                    foreach (ObjectId id in ms)
-                    {
-                        var ent = tr.GetObject(id, DbOpenMode.ForRead) as Entity;
-                        if (ent == null) continue;
-
-                        if (ent is BlockReference br)
-                        {
-                            string bn = GetEffectiveBlockName(br, tr);
-                            if (!RES_BLOCK_NAMES.Contains(bn)) continue;
-                            existing.Add((id, br.Position, true));
-                        }
-                        else if (ent is DBPoint dp)
-                        {
-                            existing.Add((id, dp.Position, false));
-                        }
-                    }
-                    var existingPts = existing.Select(e => e.pos).ToList();
-
-                    // Helper: ensure block def exists (clone from current DWG if missing)
-                    ObjectId EnsureBlockDef(string blockName)
-                    {
-                        if (bt.Has(blockName)) return bt[blockName];
-
-                        var srcDoc = AcadApp.DocumentManager.MdiActiveDocument;
-                        if (srcDoc != null)
-                        {
-                            using (var trS = srcDoc.TransactionManager.StartTransaction())
-                            {
-                                var btS = (BlockTable)trS.GetObject(srcDoc.Database.BlockTableId, DbOpenMode.ForRead);
-                                if (btS.Has(blockName))
-                                {
-                                    var ids = new ObjectIdCollection { btS[blockName] };
-                                    var map = new IdMapping();
-                                    masterDoc.Database.WblockCloneObjects(ids, masterDoc.Database.BlockTableId, map, DuplicateRecordCloning.Ignore, false);
-                                    trS.Commit();
-                                    // refresh local block table
-                                    bt = (BlockTable)tr.GetObject(masterDoc.Database.BlockTableId, DbOpenMode.ForRead);
-                                    if (bt.Has(blockName)) return bt[blockName];
-                                }
-                            }
-                        }
-                        return ObjectId.Null;
-                    }
-
-                    foreach (var it in items)
-                    {
-                        int idx = FindNearIndex(existingPts, it.Target, REPLACE_TOL);
-                        if (idx >= 0)
-                        {
-                            // Move existing (block or point)
-                            var ex = existing[idx];
-                            var entW = tr.GetObject(ex.id, DbOpenMode.ForWrite) as Entity;
-
-                            if (entW is BlockReference brW)
-                            {
-                                Vector3d d = it.Target - brW.Position;
-                                if (!d.IsZeroLength())
-                                    brW.TransformBy(Matrix3d.Displacement(d));
-
-                                // Update OD and attribute
-                                if (project != null)
-                                {
-                                    // Prefer an existing table on the entity; else use primary.
-                                    string j, dsc, nt, tbl;
-                                    bool had = TryReadResidenceOd(project.ODTables, brW.ObjectId, out j, out dsc, out nt, out tbl);
-                                    AttachOrUpdateResidenceOd(project, brW.ObjectId, had ? tbl : it.OdTable, jobFromThisDwg, it.Desc, it.Notes);
-                                }
-                                SetBlockAttribute(brW, "JOB_NUM", jobFromThisDwg);
-                            }
-                            else if (entW is DBPoint dpW)
-                            {
-                                dpW.Position = it.Target;
-                                if (project != null)
-                                    AttachOrUpdateResidenceOd(project, dpW.ObjectId, it.OdTable, jobFromThisDwg, it.Desc, it.Notes);
-                            }
-
-                            existing[idx] = (ex.id, it.Target, ex.isBlock);
-                            existingPts[idx] = it.Target;
-                            moved++;
-                        }
-                        else
-                        {
-                            // Insert new BLOCK (preferred)
-                            ObjectId btrId = EnsureBlockDef(it.BlockName);
-                            if (btrId.IsNull)
-                            {
-                                // Fallback: DBPoint if block def truly not found anywhere
-                                var dbp = new DBPoint(it.Target) { Layer = RESIDENCE_LAYER };
-                                ms.AppendEntity(dbp); tr.AddNewlyCreatedDBObject(dbp, true);
-                                if (project != null)
-                                    AttachOrUpdateResidenceOd(project, dbp.ObjectId, it.OdTable, jobFromThisDwg, it.Desc, it.Notes);
-                                inserted++;
-                                continue;
-                            }
-
-                            var br = new BlockReference(it.Target, btrId) { Layer = RESIDENCE_LAYER };
-                            ms.AppendEntity(br); tr.AddNewlyCreatedDBObject(br, true);
-
-                            // Add attributes (JOB_NUM if present)
-                            var btrRec = (BlockTableRecord)tr.GetObject(btrId, DbOpenMode.ForRead);
-                            if (btrRec.HasAttributeDefinitions)
-                            {
-                                foreach (ObjectId id in btrRec)
-                                {
-                                    var ad = tr.GetObject(id, DbOpenMode.ForRead) as AttributeDefinition;
-                                    if (ad == null || ad.Constant) continue;
-                                    var ar = new AttributeReference();
-                                    ar.SetAttributeFromBlock(ad, br.BlockTransform);
-                                    if (ad.Tag.Equals("JOB_NUM", StringComparison.OrdinalIgnoreCase))
-                                        ar.TextString = jobFromThisDwg;
-                                    br.AttributeCollection.AppendAttribute(ar);
-                                    tr.AddNewlyCreatedDBObject(ar, true);
-                                }
-                            }
-
-                            // Attach OD (JOB_NUM from this DWG; keep user's DESC/NOTES if provided)
-                            if (project != null)
-                                AttachOrUpdateResidenceOd(project, br.ObjectId, it.OdTable, jobFromThisDwg, it.Desc, it.Notes);
-
-                            inserted++;
-                        }
-                    }
-
-                    tr.Commit();
-                }
-
-                if (openedHere)
-                    masterDoc.CloseAndSave(MASTER_POINTS_PATH);
-            }
-            catch
-            {
-                if (openedHere)
-                {
-                    try { masterDoc.CloseAndSave(MASTER_POINTS_PATH); } catch { /* ignore */ }
-                }
-                throw;
-            }
-
-            return (moved, inserted);
-        }
-
-        // =========================================================================
-        // SURFDEV_V4 — 4×4 development sketch
-        // =========================================================================
-        // =========================================================================
-        // SURFDEV — 5×5 development sketch (clones residence blocks/points with OD)
-        // =========================================================================
         [CommandMethod("ResidenceSync", "SURFDEV", CommandFlags.Modal)]
         public void BuildSurfaceDevelopment()
         {
@@ -1009,10 +562,11 @@ namespace ResidenceSync
             bool insertResidences = (kres3.Status == PromptStatus.OK &&
                                      string.Equals(kres3.StringResult, "Yes", StringComparison.OrdinalIgnoreCase));
 
-            // 5) Insertion point
+            // 5) Insertion point — convert PICK (UCS) to WCS **using the INVERSE** of CUCS
             var pIns = ed.GetPoint("\nPick insertion point (centre of middle section): ");
             if (pIns.Status != PromptStatus.OK) return;
-            Point3d insertCenter = pIns.Value;
+            Matrix3d ucsToWcs = ed.CurrentUserCoordinateSystem.Inverse(); // ← correct
+            Point3d insertCenter = pIns.Value.TransformBy(ucsToWcs);      // UCS → WCS
 
             // Units/scales
             double unitsPerKm = (scaleKey == "25k") ? 200.0 : (scaleKey == "20k") ? 250.0 : 100.0;
@@ -1035,18 +589,16 @@ namespace ResidenceSync
                 return;
             }
 
-            // MASTER centre (AABB centre)
+            // MASTER centre (AABB centre, WCS)
             Point3d centerMm = new Point3d(
                 (centerRec.aabb.MinX + centerRec.aabb.MaxX) * 0.5,
                 (centerRec.aabb.MinY + centerRec.aabb.MaxY) * 0.5, 0);
 
-            // MASTER → SKETCH map
-            Func<Point3d, Point3d> Map = pm =>
-                insertCenter + new Vector3d((pm.X - centerMm.X) * unitsPerMetre,
-                                            (pm.Y - centerMm.Y) * unitsPerMetre, 0);
-
-            // Precompute global transform for cloned entities
+            // One transform for EVERYTHING (outlines, Q-lines, labels, residences)
             Matrix3d xform = BuildMasterToSketchTransform(centerMm, insertCenter, unitsPerMetre);
+
+            // (Optional) quick sanity print
+            ed.WriteMessage($"\n[SURFDEV] insertWCS=({insertCenter.X:0.###},{insertCenter.Y:0.###})  centerMm=({centerMm.X:0.###},{centerMm.Y:0.###})  units/m={unitsPerMetre:0.###}");
 
             // DLS serpentine (row 0=north, col 0=west)
             int[,] serp =
@@ -1093,7 +645,6 @@ namespace ResidenceSync
                                       centerKey.Meridian);
             }
 
-            // Build the 5×5 in one shot and (optionally) collect the master entities to clone.
             using (doc.LockDocument())
             using (var tr = doc.TransactionManager.StartTransaction())
             {
@@ -1103,14 +654,14 @@ namespace ResidenceSync
                 EnsureLayer(doc.Database, "S-7", tr);
                 if (insertResidences) EnsureLayer(doc.Database, RESIDENCE_LAYER, tr);
 
-                // Force colors on layers (and set entities explicitly)
+                // Force colors
                 SetLayerColor(doc.Database, outlineLayer, 253, tr);
                 SetLayerColor(doc.Database, "L-QSEC", 253, tr);
 
                 var bt = (BlockTable)tr.GetObject(doc.Database.BlockTableId, DbOpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForWrite);
 
-                // Store polygons for the 5×5 (in master coords) so we can test master entities.
+                // Keep master-space polygons for residence hit-testing
                 var sectionPolysMaster = new List<List<Point3d>>();
                 int secCount = 0;
 
@@ -1125,53 +676,45 @@ namespace ResidenceSync
                         if (!TryReadSectionFromJsonl(idxPath, k2, out VertexIndexRecord rec))
                             continue;
 
-                        // Keep the master poly for hit-testing master entities later
-                        sectionPolysMaster.Add(rec.verts);
+                        sectionPolysMaster.Add(rec.verts); // master coords
 
-                        // Outline
+                        // Outline (build in master, then transform)
                         var pl = new Polyline(rec.verts.Count);
                         for (int i = 0; i < rec.verts.Count; i++)
                         {
-                            var p = Map(rec.verts[i]);
+                            var p = rec.verts[i]; // master
                             pl.AddVertexAt(i, new Point2d(p.X, p.Y), 0, 0, 0);
                         }
                         pl.Closed = rec.closed;
                         pl.Layer = outlineLayer;
                         pl.ColorIndex = 253;
                         ms.AppendEntity(pl); tr.AddNewlyCreatedDBObject(pl, true);
+                        pl.TransformBy(xform);
 
-                        // Quarter-line anchors
+                        // Quarter-line anchors (master) → entities → transform
                         if (TryGetQuarterAnchorsByEdgeMedianVertexChain(rec.verts,
                                 out Point3d topV, out Point3d botV, out Point3d leftV, out Point3d rightV))
                         {
-                            Point3d topS = Map(topV);
-                            Point3d botS = Map(botV);
-                            Point3d leftS = Map(leftV);
-                            Point3d rightS = Map(rightV);
-
-                            var qv = new Line(topS, botS) { Layer = "L-QSEC", ColorIndex = 253 };
-                            var qh = new Line(leftS, rightS) { Layer = "L-QSEC", ColorIndex = 253 };
+                            var qv = new Line(topV, botV) { Layer = "L-QSEC", ColorIndex = 253 };
+                            var qh = new Line(leftV, rightV) { Layer = "L-QSEC", ColorIndex = 253 };
                             ms.AppendEntity(qv); tr.AddNewlyCreatedDBObject(qv, true);
                             ms.AppendEntity(qh); tr.AddNewlyCreatedDBObject(qh, true);
+                            qv.TransformBy(xform);
+                            qh.TransformBy(xform);
 
-                            // Label at intersection (S-7)
-                            Point3d centerS = new Point3d(
-                                (topS.X + botS.X + leftS.X + rightS.X) * 0.25,
-                                (topS.Y + botS.Y + leftS.Y + rightS.Y) * 0.25, 0);
-                            AddMaskedLabel(ms, tr, centerS, k2.Section.TrimStart('0'), secTextHt, "S-7");
+                            // Label at cross center (compute in master, then transform point)
+                            Point3d centerM = new Point3d(
+                                (topV.X + botV.X + leftV.X + rightV.X) * 0.25,
+                                (topV.Y + botV.Y + leftV.Y + rightV.Y) * 0.25, 0);
+                            AddMaskedLabel(ms, tr, centerM.TransformBy(xform), k2.Section.TrimStart('0'), secTextHt, "S-7");
                         }
                         else
                         {
-                            // Fallback: label at AABB centre
-                            double lx = double.MaxValue, ly = double.MaxValue, ux = double.MinValue, uy = double.MinValue;
-                            foreach (var v in rec.verts)
-                            {
-                                var p = Map(v);
-                                if (p.X < lx) lx = p.X; if (p.Y < ly) ly = p.Y;
-                                if (p.X > ux) ux = p.X; if (p.Y > uy) uy = p.Y;
-                            }
-                            Point3d ctr2 = new Point3d((lx + ux) * 0.5, (ly + uy) * 0.5, 0);
-                            AddMaskedLabel(ms, tr, ctr2, k2.Section.TrimStart('0'), secTextHt, "S-7");
+                            // Fallback: label at master AABB center → transform point
+                            double lx = rec.verts.Min(v => v.X), ly = rec.verts.Min(v => v.Y);
+                            double ux = rec.verts.Max(v => v.X), uy = rec.verts.Max(v => v.Y);
+                            Point3d ctrM = new Point3d((lx + ux) * 0.5, (ly + uy) * 0.5, 0);
+                            AddMaskedLabel(ms, tr, ctrM.TransformBy(xform), k2.Section.TrimStart('0'), secTextHt, "S-7");
                         }
 
                         secCount++;
@@ -1188,7 +731,6 @@ namespace ResidenceSync
                     }
                     else
                     {
-                        // Open the master file (database only) and collect the source ids to clone.
                         using (var masterDb = new Database(false, true))
                         {
                             masterDb.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
@@ -1198,23 +740,47 @@ namespace ResidenceSync
 
                             if (srcIds.Count > 0)
                             {
-                                // Clone the master entities into THIS drawing's ModelSpace.
-                                var map = new IdMapping();
+                                var idMap = new IdMapping();
                                 doc.Database.WblockCloneObjects(
-                                    srcIds, ms.ObjectId, map, DuplicateRecordCloning.Replace, false);
+                                    srcIds, ms.ObjectId, idMap, DuplicateRecordCloning.Replace, false);
 
-                                // Transform each newly cloned entity into the sketch frame and set its layer.
-                                foreach (IdPair pair in map)
+                                // Dest ids strictly from inputs; skip null/erased
+                                var destIds = new List<ObjectId>(srcIds.Count);
+                                foreach (ObjectId sid in srcIds)
                                 {
+                                    if (!idMap.Contains(sid)) continue;
+                                    var pair = idMap[sid];
                                     if (!pair.IsCloned) continue;
-                                    var ent = tr.GetObject(pair.Value, DbOpenMode.ForWrite) as Entity;
-                                    if (ent == null) continue;
-                                    ent.TransformBy(xform);
-                                    ent.Layer = RESIDENCE_LAYER;       // force them onto Z-RESIDENCE
-                                    inserted++;
+                                    var did = pair.Value;
+                                    if (did.IsNull || did.IsErased) continue;
+                                    destIds.Add(did);
                                 }
 
-                                if (inserted > 0) EnsurePointStyleVisible(); // in case some are DBPOINTs
+                                // Transform only top-level ModelSpace BR/DBPoint
+                                foreach (var did in destIds)
+                                {
+                                    Entity ent = null;
+                                    try { ent = tr.GetObject(did, DbOpenMode.ForWrite, /*openErased*/ true) as Entity; }
+                                    catch { continue; }
+                                    if (ent == null || ent.IsErased) continue;
+                                    if (ent.OwnerId != ms.ObjectId) continue;
+
+                                    if (ent is BlockReference br)
+                                    {
+                                        br.TransformBy(xform);              // same transform as outlines
+                                        br.Layer = RESIDENCE_LAYER;
+                                        br.ScaleFactors = new Scale3d(5.0); // force uniform scale = 5
+                                        inserted++;
+                                    }
+                                    else if (ent is DBPoint dp)
+                                    {
+                                        dp.TransformBy(xform);              // same transform as outlines
+                                        dp.Layer = RESIDENCE_LAYER;
+                                        inserted++;
+                                    }
+                                }
+
+                                if (inserted > 0) EnsurePointStyleVisible();
                             }
                         }
                     }
@@ -1227,12 +793,537 @@ namespace ResidenceSync
 
             ed.Regen();
         }
-        // ---- NEW: simple open-file guard ----
+
+        private static double PointToSegDist2(double px, double py,
+                                              double ax, double ay,
+                                              double bx, double by)
+        {
+            double vx = bx - ax, vy = by - ay;
+            double wx = px - ax, wy = py - ay;
+
+            double c1 = vx * wx + vy * wy;
+            if (c1 <= 0.0) return (px - ax) * (px - ax) + (py - ay) * (py - ay);
+
+            double c2 = vx * vx + vy * vy;
+            if (c2 <= c1) return (px - bx) * (px - bx) + (py - by) * (py - by);
+
+            double t = c1 / c2;
+            double projx = ax + t * vx;
+            double projy = ay + t * vy;
+            double dx = px - projx, dy = py - projy;
+            return dx * dx + dy * dy;
+        }
+
+        // What we push for each picked entity
+        private sealed class PushItem
+        {
+            public Point3d Target;           // mapped (master WCS)
+            public string BlockName;         // res_other/res_occ/res_abd (fallback = res_other)
+            public string Desc;              // from OD (manual)
+            public string Notes;             // from OD (manual)
+            public string OdTable;           // table to use when writing (prefer record's table; else primary)
+        }
+
+        // Transform a source WCS point into master WCS
+        private static Point3d MapScaledToMaster(Point3d sourceWcs, Point3d localTL, Point3d masterTL, double scale, double rot)
+            => TransformScaledPoint(sourceWcs, localTL, masterTL, scale, rot);
+
+        // Read OD from an entity (any of the supported tables). Returns true if we found one.
+        // Read OD from an entity from any of our residence tables. Returns true if found.
+        // Read OD from an entity from any of our residence tables. Returns true if found.
+        // Read OD from an entity from any of our residence tables. Returns true if found.
+
+        // C# 7.3-friendly helper (NO local functions)
+        private static bool ProbeResidenceOd(
+            FieldDefinitions defs,
+            OdTable table,
+            ObjectId entId,
+            bool openXRecords,
+            out string job,
+            out string desc,
+            out string notes)
+        {
+            job = desc = notes = null;
+
+            using (Records recs = table.GetObjectTableRecords(0, entId, OdOpenMode.OpenForRead, openXRecords))
+            {
+                if (recs == null || recs.Count == 0) return false;
+
+                foreach (Record r in recs)
+                {
+                    // Be permissive: JOB_NUM might be Character or accidentally an Integer in old data.
+                    string j = ReadOd(defs, r, new[] { "JOB_NUM" }, mv =>
+                    {
+                        if (mv == null) return null;
+                        if (mv.Type == OdDataType.Character) return mv.StrValue;
+                        if (mv.Type == OdDataType.Integer) return mv.Int32Value.ToString(CultureInfo.InvariantCulture);
+                        return mv.StrValue; // fallback
+                    });
+
+                    string d = ReadOd(defs, r, new[] { "DESCRIPTION" }, mv => mv?.StrValue);
+                    string n = ReadOd(defs, r, new[] { "NOTES" }, mv => mv?.StrValue);
+
+                    // Treat as a hit if any field actually exists on the record (empty string is OK)
+                    if (j != null || d != null || n != null)
+                    {
+                        job = j; desc = d; notes = n;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        // ---------- ATTR READER (ADD THIS) ----------
+        private static bool TryReadBlockAttributes(
+            BlockReference br,
+            out string job,
+            out string desc,
+            out string notes)
+        {
+            job = desc = notes = null;
+            if (br == null) return false;
+
+            var tm = br.Database?.TransactionManager;
+            if (tm == null) return false;
+
+            foreach (ObjectId attId in br.AttributeCollection)
+            {
+                var ar = tm.GetObject(attId, DbOpenMode.ForRead, false) as AttributeReference;
+                if (ar == null) continue;
+                var tag = ar.Tag ?? string.Empty;
+
+                if (tag.Equals("JOB_NUM", StringComparison.OrdinalIgnoreCase) ||
+                    tag.Equals("JOBNUMBER", StringComparison.OrdinalIgnoreCase) ||
+                    tag.Equals("JOB", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (job == null) job = ar.TextString;
+                }
+                else if (tag.Equals("DESCRIPTION", StringComparison.OrdinalIgnoreCase) ||
+                         tag.Equals("DESC", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (desc == null) desc = ar.TextString;
+                }
+                else if (tag.Equals("NOTES", StringComparison.OrdinalIgnoreCase) ||
+                         tag.Equals("NOTE", StringComparison.OrdinalIgnoreCase) ||
+                         tag.Equals("COMMENTS", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (notes == null) notes = ar.TextString;
+                }
+            }
+            return (job != null || desc != null || notes != null);
+        }
+
+
+
+        private static bool TrySetStringFieldByAliases(FieldDefinitions defs, Records recs, Record rec, string[] aliases, string value)
+        {
+            for (int i = 0; i < defs.Count; i++)
+            {
+                var def = defs[i];
+                if (def == null) continue;
+                if (!aliases.Any(a => a.Equals(def.Name, StringComparison.OrdinalIgnoreCase))) continue;
+                MapValue mv = rec[i];
+                mv.Assign(value ?? string.Empty);
+                recs.UpdateRecord(rec);
+                return true;
+            }
+            return false;
+        }
+
+        private static bool TrySetStringFieldByAliases(FieldDefinitions defs, Record rec, string[] aliases, string value)
+        {
+            for (int i = 0; i < defs.Count; i++)
+            {
+                var def = defs[i];
+                if (def == null) continue;
+                if (!aliases.Any(a => a.Equals(def.Name, StringComparison.OrdinalIgnoreCase))) continue;
+                MapValue mv = rec[i];
+                mv.Assign(value ?? string.Empty);
+                return true;
+            }
+            return false;
+        }
+
+        // Set a block attribute (if present) to a value
+        private static void SetBlockAttributes(BlockReference br, string job, string descOrNull, string notesOrNull)
+        {
+            if (br == null) return;
+            SetBlockAttribute(br, "JOB_NUM", job ?? string.Empty);
+            if (descOrNull != null) { SetBlockAttribute(br, "DESCRIPTION", descOrNull); SetBlockAttribute(br, "DESC", descOrNull); }
+            if (notesOrNull != null) { SetBlockAttribute(br, "NOTES", notesOrNull); SetBlockAttribute(br, "NOTE", notesOrNull); }
+        }
+
+        // Build push items (reads OD from source; performs the scale/rotate/map)
+        // Build push items (reads OD from source; performs the scale/rotate/map)
+        // NOTE: wcsToUcs parameter is now unused; kept for signature compatibility.
+        // Build push items. We no longer propagate DESCRIPTION/NOTES — only JOB_NUM.
+        // Build push items (reads OD from source entities; performs the scale/rotate/map).
+        // We propagate JOB_NUM, DESCRIPTION, and NOTES exactly as present in the source OD.
+        // If a field is present but empty in source, we propagate empty (this will overwrite defaults in master).
+        // ---------- BUILD PUSH LIST FROM SELECTION (ATTRS ONLY) ----------
+        private List<PushItem> CollectPushItemsFromSelection(
+            Document curDoc,
+            SelectionSet sel,
+            Point3d localTL_W,
+            Point3d masterTL_W,
+            double scale,
+            double rot,
+            string jobFromThisDwg,
+            out int missingAttrCount,
+            Matrix3d _unused)
+        {
+            missingAttrCount = 0;
+            var items = new List<PushItem>();
+
+            using (var tr = curDoc.TransactionManager.StartTransaction())
+            {
+                foreach (SelectedObject so in sel)
+                {
+                    if (so?.ObjectId.IsNull != false) continue;
+                    var ent = tr.GetObject(so.ObjectId, DbOpenMode.ForRead) as Entity;
+                    if (ent == null) continue;
+
+                    Point3d srcWcs;
+                    string blockName = "res_other";
+
+                    if (ent is BlockReference br)
+                    {
+                        srcWcs = br.Position;
+                        blockName = GetEffectiveBlockName(br, tr);
+                        if (!RES_BLOCK_NAMES.Contains(blockName)) continue;
+
+                        // Read attributes
+                        string j, d, n;
+                        if (!TryReadBlockAttributes(br, out j, out d, out n))
+                            missingAttrCount++;
+
+                        // Map to master
+                        Point3d target = MapScaledToMaster(srcWcs, localTL_W, masterTL_W, scale, rot);
+
+                        items.Add(new PushItem
+                        {
+                            Target = target,
+                            BlockName = blockName,
+                            // Always push JOB from DWG name; DESCRIPTION/NOTES from block (empty => overwrite)
+                            Desc = d ?? string.Empty,
+                            Notes = n ?? string.Empty,
+                            OdTable = null // unused now
+                        });
+                    }
+                    else if (ent is DBPoint dp)
+                    {
+                        // Points have no attrs — still allow position copy, empty desc/notes
+                        srcWcs = dp.Position;
+                        Point3d target = MapScaledToMaster(srcWcs, localTL_W, masterTL_W, scale, rot);
+
+                        items.Add(new PushItem
+                        {
+                            Target = target,
+                            BlockName = blockName,     // will insert res_other if needed
+                            Desc = string.Empty,
+                            Notes = string.Empty,
+                            OdTable = null
+                        });
+                    }
+                }
+                tr.Commit();
+            }
+            // merge duplicates (within tolerance)
+            return DeduplicateItems(items, DEDUPE_TOL);
+        }
+        // Deduplicate by target location within tolerance
+        private static List<PushItem> DeduplicateItems(List<PushItem> items, double tol)
+        {
+            var outList = new List<PushItem>(items.Count);
+            foreach (var it in items)
+            {
+                bool near = outList.Any(x =>
+                {
+                    double dx = x.Target.X - it.Target.X;
+                    double dy = x.Target.Y - it.Target.Y;
+                    return (dx * dx + dy * dy) <= tol * tol;
+                });
+                if (!near) outList.Add(it);
+            }
+            return outList;
+        }
+
+        // If the selection lacks OD, attach a default record on the *current* drawing
+        // If the selection lacks OD, attach a minimal record (JOB only) on the *current* drawing
+
+        // Upsert into Master_Residences.dwg: move if within REPLACE_TOL, else insert.
+        // Writes OD immediately to the canonical master table ("Blockres_other") and mirrors attributes.
+        // Never injects defaults: we write exactly what CollectPushItemsFromSelection provided.
+        // Prefer matching BLOCKs over DBPOINTs when both within tolerance.
+        // ---------- UPSERT TO MASTER (SIDE DB, ATTRS ONLY) ----------
+        // ---------- UPSERT TO MASTER (SIDE DB, ATTRS ONLY) ----------
+        private (int moved, int inserted) UpsertResidenceBlocksInMaster(
+            List<PushItem> items, string jobFromThisDwg, Editor ed)
+        {
+            int moved = 0, inserted = 0;
+
+            // Ensure file exists
+            if (!File.Exists(MASTER_POINTS_PATH))
+            {
+                using (var newDb = new Database(true, true))
+                    newDb.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
+            }
+
+            // Open master DWG as side database (no UI)
+            using (var masterDb = new Database(false, true))
+            {
+                masterDb.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                masterDb.CloseInput(true);
+
+                using (var tr = masterDb.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(masterDb.BlockTableId, DbOpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForWrite);
+
+                    // Ensure target layer exists and is visible
+                    ObjectId resLayerId = ForceLayerVisible(masterDb, RESIDENCE_LAYER, tr);
+
+                    // Index existing residence objects (blocks we recognize + legacy points)
+                    var existing = new List<(ObjectId id, Point3d pos, bool isBlock)>();
+                    foreach (ObjectId id in ms)
+                    {
+                        if (!(tr.GetObject(id, DbOpenMode.ForRead) is Entity e)) continue;
+
+                        if (e is BlockReference br)
+                        {
+                            string bn = GetEffectiveBlockName(br, tr);
+                            if (!RES_BLOCK_NAMES.Contains(bn)) continue;
+                            existing.Add((id, br.Position, true));
+                        }
+                        else if (e is DBPoint dp)
+                        {
+                            existing.Add((id, dp.Position, false));
+                        }
+                    }
+
+                    // Helper: ensure a block definition exists in *master* (clone from a source db if needed)
+                    ObjectId EnsureBlockDef(string blockName, Database srcDb)
+                    {
+                        if (bt.Has(blockName)) return bt[blockName];
+
+                        var src = srcDb ?? AcadApp.DocumentManager.MdiActiveDocument?.Database;
+                        if (src == null) return ObjectId.Null;
+
+                        using (var trS = src.TransactionManager.StartTransaction())
+                        {
+                            var btS = (BlockTable)trS.GetObject(src.BlockTableId, DbOpenMode.ForRead);
+                            if (!btS.Has(blockName)) return ObjectId.Null;
+
+                            var ids = new ObjectIdCollection { btS[blockName] };
+                            var idMap = new IdMapping();
+                            masterDb.WblockCloneObjects(ids, masterDb.BlockTableId, idMap,
+                                                        DuplicateRecordCloning.Ignore, false);
+                            trS.Commit();
+
+                            // refresh local block table
+                            bt = (BlockTable)tr.GetObject(masterDb.BlockTableId, DbOpenMode.ForRead);
+                            return bt.Has(blockName) ? bt[blockName] : ObjectId.Null;
+                        }
+                    }
+
+                    // Active drawing database to use as the source for block definitions
+                    var activeDb = AcadApp.DocumentManager.MdiActiveDocument?.Database;
+
+                    foreach (var it in items)
+                    {
+                        int idx = FindNearestIdxPreferBlocks(existing, it.Target, REPLACE_TOL);
+                        if (idx >= 0)
+                        {
+                            // MOVE/UPDATE existing
+                            var ex = existing[idx];
+                            var eW = tr.GetObject(ex.id, DbOpenMode.ForWrite) as Entity;
+
+                            if (eW is BlockReference brW)
+                            {
+                                var d = it.Target - brW.Position;
+                                if (!d.IsZeroLength()) brW.TransformBy(Matrix3d.Displacement(d));
+                                brW.LayerId = resLayerId;
+
+                                // Write attributes (JOB from DWG name; DESC/NOTES from source item)
+                                SetBlockAttributes(brW, jobFromThisDwg, it.Desc, it.Notes);
+                            }
+                            else if (eW is DBPoint dpW)
+                            {
+                                dpW.Position = it.Target;
+                                dpW.LayerId = resLayerId;
+                            }
+
+                            existing[idx] = (ex.id, it.Target, ex.isBlock);
+                            moved++;
+                        }
+                        else
+                        {
+                            // INSERT new block (preferred) or point if definition missing
+                            ObjectId btrId = EnsureBlockDef(it.BlockName, activeDb);
+                            if (btrId.IsNull)
+                            {
+                                var dbp = new DBPoint(it.Target) { LayerId = resLayerId };
+                                ms.AppendEntity(dbp); tr.AddNewlyCreatedDBObject(dbp, true);
+                                inserted++;
+                                continue;
+                            }
+
+                            var br = new BlockReference(it.Target, btrId) { LayerId = resLayerId };
+                            ms.AppendEntity(br); tr.AddNewlyCreatedDBObject(br, true);
+
+                            // Create attribute references and set values
+                            var btrRec = (BlockTableRecord)tr.GetObject(btrId, DbOpenMode.ForRead);
+                            if (btrRec.HasAttributeDefinitions)
+                            {
+                                foreach (ObjectId id in btrRec)
+                                {
+                                    var ad = tr.GetObject(id, DbOpenMode.ForRead) as AttributeDefinition;
+                                    if (ad == null || ad.Constant) continue;
+
+                                    var ar = new AttributeReference();
+                                    ar.SetAttributeFromBlock(ad, br.BlockTransform);
+                                    br.AttributeCollection.AppendAttribute(ar);
+                                    tr.AddNewlyCreatedDBObject(ar, true);
+                                }
+                            }
+
+                            SetBlockAttributes(br, jobFromThisDwg, it.Desc, it.Notes);
+                            inserted++;
+                        }
+                    }
+
+                    tr.Commit();
+                }
+
+                // Save side database back to disk (no UI)
+                masterDb.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
+            }
+
+            return (moved, inserted);
+        }
         private bool IsMasterPointsOpen()
         {
             return GetOpenDocumentByPath(AcadApp.DocumentManager, MASTER_POINTS_PATH) != null;
         }
+        // For a NEW record (before AddRecord) – no UpdateRecord() needed
+        private static void SetStringField(FieldDefinitions defs, Record rec, string field, string value)
+        {
+            for (int i = 0; i < defs.Count; i++)
+            {
+                var def = defs[i];
+                if (!def.Name.Equals(field, StringComparison.OrdinalIgnoreCase)) continue;
+                MapValue mv = rec[i];     // get existing MapValue
+                mv.Assign(value ?? string.Empty);
+                break;
+            }
+        }
 
+        // For an EXISTING record opened via GetObjectTableRecords(OpenForWrite, …)
+        private static void SetStringField(FieldDefinitions defs, Records recs, Record rec, string field, string value)
+        {
+            for (int i = 0; i < defs.Count; i++)
+            {
+                var def = defs[i];
+                if (!def.Name.Equals(field, StringComparison.OrdinalIgnoreCase)) continue;
+                MapValue mv = rec[i];     // get existing MapValue
+                mv.Assign(value ?? string.Empty);
+                recs.UpdateRecord(rec);   // <- IMPORTANT for updates
+                break;
+            }
+        }
+
+        [CommandMethod("ResidenceSync", "DUMPMASTER", CommandFlags.Modal)]
+        public void DumpMasterSummary()
+        {
+            var ed = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
+            if (!File.Exists(MASTER_POINTS_PATH)) { ed?.WriteMessage("\nDUMPMASTER: Master file not found."); return; }
+
+            using (var db = new Database(false, true))
+            {
+                db.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                db.CloseInput(true);
+
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(db.BlockTableId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
+
+                    int nInserts = 0, nPoints = 0;
+                    double minx = double.MaxValue, miny = double.MaxValue, maxx = double.MinValue, maxy = double.MinValue;
+                    Action<Point3d> acc = p => { if (p.X < minx) minx = p.X; if (p.Y < miny) miny = p.Y; if (p.X > maxx) maxx = p.X; if (p.Y > maxy) maxy = p.Y; };
+
+                    foreach (ObjectId id in ms)
+                    {
+                        var e = tr.GetObject(id, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead) as Entity;
+                        if (e is BlockReference br) { nInserts++; acc(br.Position); }
+                        else if (e is DBPoint dp) { nPoints++; acc(dp.Position); }
+                    }
+                    tr.Commit();
+
+                    ed?.WriteMessage($"\nDUMPMASTER: INSERTs={nInserts}, POINTs={nPoints}, Extents=[{minx:0.###},{miny:0.###}]–[{maxx:0.###},{maxy:0.###}]");
+                }
+            }
+        }
+        [CommandMethod("ResidenceSync", "DUMPMASTERPLUS", CommandFlags.Modal)]
+        public void DumpMasterPlus()
+        {
+            var ed = Autodesk.AutoCAD.ApplicationServices.Core.Application.DocumentManager.MdiActiveDocument?.Editor;
+            if (!File.Exists(MASTER_POINTS_PATH)) { ed?.WriteMessage("\nDUMPMASTER+: Master file not found."); return; }
+
+            using (var db = new Database(false, true))
+            {
+                db.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                db.CloseInput(true);
+
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    var bt = (BlockTable)tr.GetObject(db.BlockTableId, DbOpenMode.ForRead);
+                    var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForRead);
+
+                    var byName = new Dictionary<string, (int count, List<Point3d> samples)>(StringComparer.OrdinalIgnoreCase);
+                    int nPoints = 0;
+
+                    foreach (ObjectId id in ms)
+                    {
+                        if (!(tr.GetObject(id, DbOpenMode.ForRead) is Entity e)) continue;
+
+                        if (e is BlockReference br)
+                        {
+                            ObjectId btrId = br.IsDynamicBlock ? br.DynamicBlockTableRecord : br.BlockTableRecord;
+                            var btr = (BlockTableRecord)tr.GetObject(btrId, DbOpenMode.ForRead);
+                            string name = btr?.Name ?? "<null>";
+
+                            if (!byName.TryGetValue(name, out var tup))
+                                tup = (0, new List<Point3d>(3));
+                            tup.count++;
+                            if (tup.samples.Count < 3) tup.samples.Add(br.Position);
+                            byName[name] = tup;
+                        }
+                        else if (e is DBPoint)
+                        {
+                            nPoints++;
+                        }
+                    }
+
+                    tr.Commit();
+
+                    if (byName.Count == 0 && nPoints == 0)
+                    {
+                        ed?.WriteMessage("\nDUMPMASTER+: No INSERTs or DBPOINTs found.");
+                        return;
+                    }
+
+                    ed?.WriteMessage("\nDUMPMASTER+:");
+                    foreach (var kv in byName.OrderBy(k => k.Key))
+                    {
+                        var smp = kv.Value.samples.Select(p => $"({p.X:0.###},{p.Y:0.###})");
+                        ed?.WriteMessage($"\n  {kv.Key}: {kv.Value.count}  samples: {string.Join(", ", smp)}");
+                    }
+                    if (nPoints > 0)
+                        ed?.WriteMessage($"\n  <DBPOINT>: {nPoints}");
+                }
+            }
+        }
         // =========================================================================
         // Helpers (layers, labels, chains, JSONL, geometry)
         // =========================================================================
@@ -1261,17 +1352,39 @@ namespace ResidenceSync
             return names;
         }
 
-        private static Document GetOpenDocumentByPath(DocumentCollection docCollection, string fullPath)
+        private static Document GetOpenDocumentByPath(DocumentCollection docs, string fullPath)
         {
-            if (docCollection == null || string.IsNullOrWhiteSpace(fullPath)) return null;
-            string normalizedTarget = NormalizePath(fullPath);
-            foreach (Document openDoc in docCollection)
+            if (docs == null || string.IsNullOrWhiteSpace(fullPath)) return null;
+            string target = NormalizePath(fullPath);
+
+            foreach (Document d in docs)
             {
-                if (openDoc == null) continue;
-                string docPath = NormalizePath(openDoc.Name);
-                if (!string.IsNullOrEmpty(docPath) &&
-                    string.Equals(docPath, normalizedTarget, StringComparison.OrdinalIgnoreCase))
-                    return openDoc;
+                if (d == null) continue;
+
+                // Prefer the database filename (full path). Fallback to Name only if it is rooted.
+                string candidate = null;
+                try
+                {
+                    candidate = d.Database?.Filename;
+                    if (!string.IsNullOrWhiteSpace(candidate))
+                        candidate = NormalizePath(candidate);
+                }
+                catch { /* ignore */ }
+
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    try
+                    {
+                        string n = d.Name;
+                        if (!string.IsNullOrWhiteSpace(n) && Path.IsPathRooted(n))
+                            candidate = NormalizePath(n);
+                    }
+                    catch { /* ignore */ }
+                }
+
+                if (!string.IsNullOrWhiteSpace(candidate) &&
+                    string.Equals(candidate, target, StringComparison.OrdinalIgnoreCase))
+                    return d;
             }
             return null;
         }
@@ -1397,6 +1510,80 @@ namespace ResidenceSync
             tr.AddNewlyCreatedDBObject(mt, true);
         }
 
+        // Create (or normalize) a layer and return its ObjectId.
+        // Ensures: ON, THAWED, UNLOCKED, PLOT = true. Name is case-insensitive.
+        private static ObjectId ForceLayerVisible(Database db, string layerName, Transaction tr)
+        {
+            var lt = (LayerTable)tr.GetObject(db.LayerTableId, DbOpenMode.ForRead);
+
+            ObjectId lid;
+            if (!lt.Has(layerName))
+            {
+                lt.UpgradeOpen();
+                var ltr = new LayerTableRecord { Name = layerName };
+                // Make it visible & plottable
+                ltr.IsOff = false;
+                ltr.IsFrozen = false;
+                ltr.IsLocked = false;
+                ltr.IsPlottable = true;
+
+                lid = lt.Add(ltr);
+                tr.AddNewlyCreatedDBObject(ltr, true);
+            }
+            else
+            {
+                lid = lt[layerName];
+                var ltr = (LayerTableRecord)tr.GetObject(lid, DbOpenMode.ForWrite);
+                ltr.IsOff = false;
+                ltr.IsFrozen = false;
+                ltr.IsLocked = false;
+                ltr.IsPlottable = true;
+            }
+            return lid;
+        }
+
+        // Returns all OD table names in this drawing that look like our residence tables
+        // Returns OD tables that either match our canonical names OR
+        // define at least one of the fields we care about (JOB_NUM/DESCRIPTION/NOTES).
+        private static List<string> GetExistingResidenceOdTables(Tables tables)
+        {
+            var outNames = new List<string>();
+            if (tables == null) return outNames;
+
+            // 1) Exact preferred names first (colon form)
+            foreach (var p in new[] { "Block:res_other", "Block:res_occ", "Block:res_abd" })
+                if (tables.IsTableDefined(p)) outNames.Add(p);
+
+            // 2) Fallback: colonless variants if present
+            foreach (var q in new[] { "Blockres_other", "Blockres_occ", "Blockres_abd" })
+                if (tables.IsTableDefined(q) && !outNames.Contains(q, StringComparer.OrdinalIgnoreCase))
+                    outNames.Add(q);
+
+            // 3) Any other table that happens to carry our fields (rare)
+            foreach (string tn in tables.GetTableNames())
+            {
+                if (outNames.Contains(tn, StringComparer.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    using (var t = tables[tn])
+                    {
+                        var defs = t.FieldDefinitions;
+                        for (int i = 0; i < defs.Count; i++)
+                        {
+                            var name = defs[i]?.Name;
+                            if (string.IsNullOrWhiteSpace(name)) continue;
+                            if (JOB_ALIASES.Concat(DESC_ALIASES).Concat(NOTES_ALIASES)
+                                .Any(a => a.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                            { outNames.Add(tn); break; }
+                        }
+                    }
+                }
+                catch { /* ignore */ }
+            }
+            return outNames;
+        }
+
+
         // ---------- Side-chain selection (robust) ----------
 
         private struct EdgeInfo
@@ -1504,9 +1691,17 @@ namespace ResidenceSync
             return verts[bestIdx];
         }
 
+        // Convenience: set JOB_NUM always, and DESCRIPTION/NOTES when provided.
+        // Writes to common tag variants so different block definitions are covered.
 
 
         // Returns the middle existing vertex (median-by-coordinate) from each true side chain.
+        // Returns the middle existing vertex (median-by-coordinate) from each true side chain.
+        // Returns the middle existing vertex (median-by-coordinate) from each true side chain.
+        // Hardened against odd shapes and spiky outlines; falls back to oriented-box cross if needed.
+        // Robust quarter-line anchors.
+        // Top/Bottom choose the vertex closest to horizontal mid-span (E-target), not median index.
+        // Left/Right already use nearest to N-target. Falls back to oriented-box cross if off-centre.
         private static bool TryGetQuarterAnchorsByEdgeMedianVertexChain(
             List<Point3d> verts,
             out Point3d topV, out Point3d bottomV, out Point3d leftV, out Point3d rightV)
@@ -1530,8 +1725,8 @@ namespace ResidenceSync
             }
             if (edges.Count == 0) return false;
 
-            // Local axes from the highest near-horizontal edge
-            const double degTol = 15.0;
+            // Choose a near-horizontal edge with highest average Y; fallback = longest edge.
+            const double degTol = 12.0;
             double cosTol = Math.Cos(degTol * Math.PI / 180.0);
             EdgeInfo topEdge = default(EdgeInfo);
             double bestTopY = double.MinValue;
@@ -1539,19 +1734,17 @@ namespace ResidenceSync
             {
                 double horiz = Math.Abs(e.U.DotProduct(Vector3d.XAxis));
                 double avgY = (e.A.Y + e.B.Y) * 0.5;
-                if (horiz >= cosTol && avgY > bestTopY)
-                {
-                    bestTopY = avgY; topEdge = e;
-                }
+                if (horiz >= cosTol && avgY > bestTopY) { bestTopY = avgY; topEdge = e; }
             }
             if (bestTopY == double.MinValue)
                 topEdge = edges.OrderByDescending(e => e.Len).First();
 
+            // Local axes
             Vector3d east = topEdge.U.GetNormal();
             if (east.Length <= 1e-12) return false;
             Vector3d north = east.RotateBy(Math.PI / 2.0, Vector3d.ZAxis).GetNormal();
 
-            // Precompute projections & extremes (AABB in local frame)
+            // Extents
             double minE = double.MaxValue, maxE = double.MinValue;
             double minN = double.MaxValue, maxN = double.MinValue;
             for (int i = 0; i < n; i++)
@@ -1564,85 +1757,69 @@ namespace ResidenceSync
             }
             double spanE = Math.Max(1e-6, maxE - minE);
             double spanN = Math.Max(1e-6, maxN - minN);
-            double bandTol = Math.Max(2.0, 0.005 * Math.Max(spanE, spanN)); // 2 m or 0.5%
 
-            // Chains by closest axis
+            double bandTol = Math.Max(5.0, 0.01 * Math.Max(spanE, spanN)); // wider band
+
+            // Chains
             var eChains = BuildChainsClosest(edges, east, north); // top/bottom
             var nChains = BuildChainsClosest(edges, north, east); // left/right
             if (eChains.Count == 0 || nChains.Count == 0) return false;
 
-            // band gates
             bool TouchesTop(ChainInfo ch)
             {
-                for (int k = 0; k <= ch.SegCount; k++)
-                {
-                    int idx = (ch.Start + k) % n;
-                    Vector3d d = verts[idx] - Point3d.Origin;
-                    if (maxN - d.DotProduct(north) <= bandTol) return true;
-                }
+                foreach (int idx in ChainVertexIndices(ch, n))
+                    if (maxN - AxisProj(verts[idx], north) <= bandTol) return true;
                 return false;
             }
             bool TouchesBottom(ChainInfo ch)
             {
-                for (int k = 0; k <= ch.SegCount; k++)
-                {
-                    int idx = (ch.Start + k) % n;
-                    Vector3d d = verts[idx] - Point3d.Origin;
-                    if (d.DotProduct(north) - minN <= bandTol) return true;
-                }
+                foreach (int idx in ChainVertexIndices(ch, n))
+                    if (AxisProj(verts[idx], north) - minN <= bandTol) return true;
                 return false;
             }
             bool TouchesLeft(ChainInfo ch)
             {
-                for (int k = 0; k <= ch.SegCount; k++)
-                {
-                    int idx = (ch.Start + k) % n;
-                    Vector3d d = verts[idx] - Point3d.Origin;
-                    if (d.DotProduct(east) - minE <= bandTol) return true;
-                }
+                foreach (int idx in ChainVertexIndices(ch, n))
+                    if (AxisProj(verts[idx], east) - minE <= bandTol) return true;
                 return false;
             }
             bool TouchesRight(ChainInfo ch)
             {
-                for (int k = 0; k <= ch.SegCount; k++)
-                {
-                    int idx = (ch.Start + k) % n;
-                    Vector3d d = verts[idx] - Point3d.Origin;
-                    if (maxE - d.DotProduct(east) <= bandTol) return true;
-                }
+                foreach (int idx in ChainVertexIndices(ch, n))
+                    if (maxE - AxisProj(verts[idx], east) <= bandTol) return true;
                 return false;
             }
 
-            // choose extremes with length tie-break
-            ChainInfo PickMax(List<ChainInfo> list, Func<ChainInfo, bool> gate) =>
-                list.Where(gate).OrderByDescending(c => c.Score).ThenByDescending(c => c.TotalLen)
-                    .DefaultIfEmpty(list.OrderByDescending(c => c.Score).ThenByDescending(c => c.TotalLen).First())
-                    .First();
+            ChainInfo PickTop(IEnumerable<ChainInfo> list) => list.OrderByDescending(c => c.Score).ThenByDescending(c => c.TotalLen).First();
+            ChainInfo PickBottom(IEnumerable<ChainInfo> list) => list.OrderBy(c => c.Score).ThenByDescending(c => c.TotalLen).First();
 
-            ChainInfo PickMin(List<ChainInfo> list, Func<ChainInfo, bool> gate) =>
-                list.Where(gate).OrderBy(c => c.Score).ThenByDescending(c => c.TotalLen)
-                    .DefaultIfEmpty(list.OrderBy(c => c.Score).ThenByDescending(c => c.TotalLen).First())
-                    .First();
+            var top = eChains.Where(TouchesTop).DefaultIfEmpty(eChains.OrderByDescending(c => c.Score).First()).First();
+            var bottom = eChains.Where(TouchesBottom).DefaultIfEmpty(eChains.OrderBy(c => c.Score).First()).First();
+            var left = nChains.Where(TouchesLeft).DefaultIfEmpty(nChains.OrderBy(c => c.Score).First()).First();
+            var right = nChains.Where(TouchesRight).DefaultIfEmpty(nChains.OrderByDescending(c => c.Score).First()).First();
 
-            var top = PickMax(eChains, TouchesTop);
-            var bottom = PickMin(eChains, TouchesBottom);
-            var left = PickMin(nChains, TouchesLeft);
-            var right = PickMax(nChains, TouchesRight);
+            // Use nearest-to-mid-span anchors (fixes wrong vertex picks)
+            double Etarget = 0.5 * (minE + maxE);
+            topV = ChainVertexNearestAxisValue(verts, top, east, Etarget);
+            bottomV = ChainVertexNearestAxisValue(verts, bottom, east, Etarget);
 
-            // **Median-by-coordinate** vertex on each winning chain
-            // Replace the four lines at the end of TryGetQuarterAnchorsByEdgeMedianVertexChain with:
+            double Ntarget = 0.5 * (minN + maxN);
+            leftV = ChainVertexNearestAxisValue(verts, left, north, Ntarget);
+            rightV = ChainVertexNearestAxisValue(verts, right, north, Ntarget);
 
-            // Top & Bottom: median existing vertex along the local EAST axis
-            topV = ChainMedianByAxis(verts, top, east);
-            bottomV = ChainMedianByAxis(verts, bottom, east);
-
-            // Shared "horizontal" in local NORTH to align the left/right endpoints
-            double N_target = 0.5 * (AxisProj(topV, north) + AxisProj(bottomV, north));
-
-            // Left & Right: existing vertex on each chain closest to that same NORTH value
-            leftV = ChainVertexNearestAxisValue(verts, left, north, N_target);
-            rightV = ChainVertexNearestAxisValue(verts, right, north, N_target);
-
+            // Sanity fallback
+            double Emid = 0.5 * (AxisProj(leftV, east) + AxisProj(rightV, east));
+            double Nmid = 0.5 * (AxisProj(topV, north) + AxisProj(bottomV, north));
+            if (Math.Abs(Emid - 0.5 * (minE + maxE)) > 0.25 * spanE ||
+                Math.Abs(Nmid - 0.5 * (minN + maxN)) > 0.25 * spanN)
+            {
+                Point3d FromEN(double E, double N) =>
+                    new Point3d(east.X * E + north.X * N, east.Y * E + north.Y * N, 0);
+                topV = FromEN(0.5 * (minE + maxE), maxN);
+                bottomV = FromEN(0.5 * (minE + maxE), minN);
+                leftV = FromEN(minE, 0.5 * (minN + maxN));
+                rightV = FromEN(maxE, 0.5 * (minN + maxN));
+            }
             return true;
         }
 
@@ -1667,13 +1844,20 @@ namespace ResidenceSync
 
                 foreach (ObjectId id in ms)
                 {
-                    var br = tr.GetObject(id, DbOpenMode.ForRead) as BlockReference;
-                    if (br == null) continue;
-
-                    string name = GetEffectiveBlockName(br, tr);
-                    if (!RES_BLOCK_NAMES.Contains(name)) continue;
-
-                    var pos = br.Position;
+                    Entity e = tr.GetObject(id, DbOpenMode.ForRead) as Entity;
+                    if (e == null) continue;
+                    Point3d pos;
+                    if (e is BlockReference br)
+                    {
+                        string name = GetEffectiveBlockName(br, tr);
+                        if (!RES_BLOCK_NAMES.Contains(name)) continue;
+                        pos = br.Position;
+                    }
+                    else if (e is DBPoint dp)
+                    {
+                        pos = dp.Position;
+                    }
+                    else continue;
 
                     // Inside any of the 5×5 section polygons?
                     foreach (var poly in sectionPolys)
@@ -1691,14 +1875,26 @@ namespace ResidenceSync
         }
 
         // Build the same mapping transform used by the outlines: scale about center, then shift.
+        // IMPORTANT: Order matters. Right-most applies first. We want Scale then Displacement,
+        // so the matrix product must be postShift * scaleAboutCenter.
+        // Build the same mapping transform used by the outlines: scale about center, then shift.
+        // IMPORTANT: matrix composition order — right-most is applied first.
+        // Build the mapping transform for ALL geometry (outlines, Q-lines, labels, residences).
+        // Right-most matrix applies first: ScaleAbout(center) then Displacement.
+        // Build the mapping transform used by SURFDEV for ALL geometry.
+        // Desired mapping: p' = insertCenter + s * (p - centerMm)
+        // Matrix composition (right-most applies first):
+        // p' = Displacement(insertCenter - centerMm)  *  ScaleAbout(centerMm, s)  *  p
         private static Matrix3d BuildMasterToSketchTransform(Point3d centerMm, Point3d insertCenter, double unitsPerMetre)
         {
-            // p' = insertCenter + unitsPerMetre * (p - centerMm)
+            // Scale about the master centre
             var scaleAboutCenter = Matrix3d.Scaling(unitsPerMetre, centerMm);
-            var postShift = Matrix3d.Displacement(
-                new Vector3d(insertCenter.X - centerMm.X * unitsPerMetre,
-                             insertCenter.Y - centerMm.Y * unitsPerMetre, 0));
-            return scaleAboutCenter * postShift;
+
+            // IMPORTANT: displacement is (insertCenter - centerMm), NOT (insertCenter - s*centerMm)
+            var postShift = Matrix3d.Displacement(insertCenter - centerMm);
+
+            // Apply scale first, then shift
+            return postShift * scaleAboutCenter;
         }
 
         private struct VertexIndexRecord
@@ -1907,6 +2103,42 @@ namespace ResidenceSync
             var res = ed.GetString(opts);
             return (res.Status == PromptStatus.OK) ? res.StringResult : null;
         }
+        // Prefer matching BLOCKs over DBPOINTs when both are within tol.
+        private static int FindNearestIdxPreferBlocks(List<(ObjectId id, Point3d pos, bool isBlock)> list, Point3d target, double tol)
+        {
+            double tol2 = tol * tol;
+
+            int bestIdx = -1;
+            double bestD2 = double.MaxValue;
+
+            // Pass 1: prefer blocks
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (!list[i].isBlock) continue;
+                double dx = target.X - list[i].pos.X;
+                double dy = target.Y - list[i].pos.Y;
+                double d2 = dx * dx + dy * dy;
+                if (d2 <= tol2 && d2 < bestD2)
+                {
+                    bestD2 = d2; bestIdx = i;
+                }
+            }
+            if (bestIdx >= 0) return bestIdx;
+
+            // Pass 2: allow DBPOINTs if no blocks within tol
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (list[i].isBlock) continue;
+                double dx = target.X - list[i].pos.X;
+                double dy = target.Y - list[i].pos.Y;
+                double d2 = dx * dx + dy * dy;
+                if (d2 <= tol2 && d2 < bestD2)
+                {
+                    bestD2 = d2; bestIdx = i;
+                }
+            }
+            return bestIdx;
+        }
 
         private List<Point3d> ReadPointsFromMaster(out bool exists)
         {
@@ -1944,6 +2176,38 @@ namespace ResidenceSync
                 }
             }
             return points;
+        }
+        private static void HardFlushAndSaveMaster(Document masterDoc, string path, Editor ed)
+        {
+            try
+            {
+                // Light "touch" to ensure DB is considered dirty if needed
+                masterDoc.Database.TileMode = masterDoc.Database.TileMode; // noop touch
+
+                // Removed: masterDoc.Database.Caption (doesn't exist on Database)
+
+                var dbPath = NormalizePath(masterDoc.Database.Filename);
+                var targetPath = NormalizePath(path);
+
+                if (!string.IsNullOrWhiteSpace(targetPath) &&
+                    string.Equals(dbPath, targetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Open doc points at the same file; SaveAs to the same path to force a flush
+                    masterDoc.Database.SaveAs(targetPath, DwgVersion.Current);
+                    ed?.WriteMessage($"\n[Save] Database.SaveAs → {targetPath}");
+                }
+                else
+                {
+                    // Fallback: close & save to the requested path
+                    masterDoc.CloseAndSave(string.IsNullOrWhiteSpace(path) ? masterDoc.Database.Filename : path);
+                    ed?.WriteMessage($"\n[Save] CloseAndSave → {path}");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                ed?.WriteMessage($"\n[Save] Failed: {ex.Message}");
+                throw;
+            }
         }
 
         // --------- Geometry & utilities ---------
@@ -2096,6 +2360,24 @@ namespace ResidenceSync
             foreach (var p in pts)
                 if (!HasNear(outList, p, tol)) outList.Add(p);
             return outList;
+        }
+        // Set a single block attribute (if present) to a value.
+        private static void SetBlockAttribute(BlockReference br, string tag, string value)
+        {
+            if (br == null || string.IsNullOrWhiteSpace(tag)) return;
+            var tm = br.Database?.TransactionManager;
+            if (tm == null) return;
+
+            foreach (ObjectId attId in br.AttributeCollection)
+            {
+                var ar = tm.GetObject(attId, DbOpenMode.ForWrite, false) as AttributeReference;
+                if (ar == null) continue;
+                if (ar.Tag.Equals(tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    ar.TextString = value ?? string.Empty;
+                    // no break on purpose: some blocks might have duplicate tags we want consistent
+                }
+            }
         }
 
         // ---------------- value types ----------------
