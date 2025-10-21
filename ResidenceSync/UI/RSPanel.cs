@@ -1,5 +1,5 @@
 using Autodesk.AutoCAD.ApplicationServices;
-using Autodesk.AutoCAD.ApplicationServices.Core;
+using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 using ResidenceSync.Properties;
 using System;
 using System.Windows.Forms;
