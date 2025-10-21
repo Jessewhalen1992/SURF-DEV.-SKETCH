@@ -12,6 +12,9 @@ namespace ResidenceSync.UI
         {
             InitializeComponent();
             InitializeGridSizeOptions();
+            InitializeScaleOptions();
+            InitializeSurveyedOptions();
+            InitializeInsertResidencesOptions();
             LoadUserSettings();
         }
 
@@ -19,10 +22,10 @@ namespace ResidenceSync.UI
         {
             SaveUserSettings();
             var macro = MacroBuilder.BuildBuildSec(
-                null,
-                null,
-                null,
-                null);
+                GetTextValue(textSection),
+                GetTextValue(textTownship),
+                GetTextValue(textRange),
+                GetTextValue(textMeridian));
             SendMacro(macro);
         }
 
@@ -37,14 +40,14 @@ namespace ResidenceSync.UI
         {
             SaveUserSettings();
             var macro = MacroBuilder.BuildSurfDev(
-                null,
-                null,
-                null,
-                null,
+                GetTextValue(textSection),
+                GetTextValue(textTownship),
+                GetTextValue(textRange),
+                GetTextValue(textMeridian),
                 GetSurfaceSizeSelection(),
-                null,
-                null,
-                null);
+                GetScaleSelection(),
+                GetSurveyedSelection(),
+                GetInsertResidencesSelection());
             SendMacro(macro);
         }
 
@@ -83,27 +86,118 @@ namespace ResidenceSync.UI
             return "5x5";
         }
 
+        private string GetScaleSelection()
+        {
+            if (comboScale.SelectedItem is string selected)
+            {
+                return selected == PromptOption ? null : selected;
+            }
+
+            return null;
+        }
+
+        private bool? GetSurveyedSelection()
+        {
+            if (comboSurveyed.SelectedItem is string selected)
+            {
+                if (selected == PromptOption)
+                {
+                    return null;
+                }
+
+                return string.Equals(selected, "Surveyed", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return null;
+        }
+
+        private bool? GetInsertResidencesSelection()
+        {
+            if (comboInsertResidences.SelectedItem is string selected)
+            {
+                if (selected == PromptOption)
+                {
+                    return null;
+                }
+
+                return string.Equals(selected, "Yes", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return null;
+        }
+
+        private string GetTextValue(TextBox textBox)
+        {
+            var value = textBox.Text?.Trim();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+
         private void LoadUserSettings()
         {
             var settings = Settings.Default;
+            textSection.Text = settings.SectionKeySec ?? string.Empty;
+            textTownship.Text = settings.SectionKeyTwp ?? string.Empty;
+            textRange.Text = settings.SectionKeyRge ?? string.Empty;
+            textMeridian.Text = settings.SectionKeyMer ?? string.Empty;
+
             var savedSize = settings.SurfDevSize;
+            var gridIndex = -1;
             if (!string.IsNullOrWhiteSpace(savedSize))
             {
-                var index = comboGridSize.FindStringExact(savedSize);
-                if (index >= 0)
-                {
-                    comboGridSize.SelectedIndex = index;
-                    return;
-                }
+                gridIndex = comboGridSize.FindStringExact(savedSize);
             }
 
-            comboGridSize.SelectedIndex = comboGridSize.FindStringExact("5x5");
+            if (gridIndex >= 0)
+            {
+                comboGridSize.SelectedIndex = gridIndex;
+            }
+            else
+            {
+                comboGridSize.SelectedIndex = comboGridSize.FindStringExact("5x5");
+            }
+
+            var savedScale = settings.SurfDevScale;
+            if (!string.IsNullOrWhiteSpace(savedScale))
+            {
+                SelectComboValue(comboScale, savedScale);
+            }
+            else
+            {
+                SelectComboValue(comboScale, null);
+            }
+
+            var savedSurveyed = settings.SurfDevSurveyed;
+            if (savedSurveyed.HasValue)
+            {
+                SelectComboValue(comboSurveyed, savedSurveyed.Value ? "Surveyed" : "Unsurveyed");
+            }
+            else
+            {
+                SelectComboValue(comboSurveyed, null);
+            }
+
+            var savedInsert = settings.SurfDevInsertResidences;
+            if (savedInsert.HasValue)
+            {
+                SelectComboValue(comboInsertResidences, savedInsert.Value ? "Yes" : "No");
+            }
+            else
+            {
+                SelectComboValue(comboInsertResidences, null);
+            }
         }
 
         private void SaveUserSettings()
         {
             var settings = Settings.Default;
+            settings.SectionKeySec = textSection.Text?.Trim();
+            settings.SectionKeyTwp = textTownship.Text?.Trim();
+            settings.SectionKeyRge = textRange.Text?.Trim();
+            settings.SectionKeyMer = textMeridian.Text?.Trim();
             settings.SurfDevSize = GetSurfaceSizeSelection();
+            settings.SurfDevScale = GetScaleSelection() ?? string.Empty;
+            settings.SurfDevSurveyed = GetSurveyedSelection();
+            settings.SurfDevInsertResidences = GetInsertResidencesSelection();
             settings.Save();
         }
 
@@ -123,5 +217,74 @@ namespace ResidenceSync.UI
                 comboGridSize.SelectedIndex = comboGridSize.FindStringExact("5x5");
             }
         }
+
+        private void InitializeScaleOptions()
+        {
+            comboScale.Items.Clear();
+            comboScale.Items.AddRange(new object[]
+            {
+                PromptOption,
+                "50k",
+                "25k",
+                "20k"
+            });
+
+            SelectComboValue(comboScale, "50k");
+        }
+
+        private void InitializeSurveyedOptions()
+        {
+            comboSurveyed.Items.Clear();
+            comboSurveyed.Items.AddRange(new object[]
+            {
+                PromptOption,
+                "Surveyed",
+                "Unsurveyed"
+            });
+
+            comboSurveyed.SelectedIndex = comboSurveyed.FindStringExact(PromptOption);
+        }
+
+        private void InitializeInsertResidencesOptions()
+        {
+            comboInsertResidences.Items.Clear();
+            comboInsertResidences.Items.AddRange(new object[]
+            {
+                PromptOption,
+                "Yes",
+                "No"
+            });
+
+            SelectComboValue(comboInsertResidences, "No");
+        }
+
+        private void SelectComboValue(ComboBox comboBox, string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                var promptIndex = comboBox.FindStringExact(PromptOption);
+                if (promptIndex >= 0)
+                {
+                    comboBox.SelectedIndex = promptIndex;
+                }
+                else if (comboBox.Items.Count > 0)
+                {
+                    comboBox.SelectedIndex = 0;
+                }
+                return;
+            }
+
+            var index = comboBox.FindStringExact(value);
+            if (index >= 0)
+            {
+                comboBox.SelectedIndex = index;
+            }
+            else if (comboBox.Items.Count > 0 && comboBox.SelectedIndex < 0)
+            {
+                comboBox.SelectedIndex = 0;
+            }
+        }
+
+        private const string PromptOption = "Prompt";
     }
 }
