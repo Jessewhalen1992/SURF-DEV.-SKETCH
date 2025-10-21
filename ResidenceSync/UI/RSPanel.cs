@@ -11,6 +11,7 @@ namespace ResidenceSync.UI
         public RSPanel()
         {
             InitializeComponent();
+            InitializeGridSizeOptions();
             LoadUserSettings();
         }
 
@@ -18,10 +19,10 @@ namespace ResidenceSync.UI
         {
             SaveUserSettings();
             var macro = MacroBuilder.BuildBuildSec(
-                txtSec.Text,
-                txtTwp.Text,
-                txtRge.Text,
-                txtMer.Text);
+                null,
+                null,
+                null,
+                null);
             SendMacro(macro);
         }
 
@@ -36,14 +37,14 @@ namespace ResidenceSync.UI
         {
             SaveUserSettings();
             var macro = MacroBuilder.BuildSurfDev(
-                txtSec.Text,
-                txtTwp.Text,
-                txtRge.Text,
-                txtMer.Text,
+                null,
+                null,
+                null,
+                null,
                 GetSurfaceSizeSelection(),
-                GetScaleSelection(),
-                GetSurveyedSelection(),
-                GetInsertResidencesSelection());
+                null,
+                null,
+                null);
             SendMacro(macro);
         }
 
@@ -72,145 +73,55 @@ namespace ResidenceSync.UI
             lblStatus.Text = message;
         }
 
-        private string GetScaleSelection()
-        {
-            if (radioScale20.Checked)
-            {
-                return "20k";
-            }
-
-            if (radioScale25.Checked)
-            {
-                return "25k";
-            }
-
-            return "50k";
-        }
-
         private string GetSurfaceSizeSelection()
         {
-            if (radioSize3.Checked)
+            if (comboGridSize.SelectedItem is string selected && !string.IsNullOrWhiteSpace(selected))
             {
-                return "3x3";
-            }
-
-            if (radioSize7.Checked)
-            {
-                return "7x7";
-            }
-
-            if (radioSize9.Checked)
-            {
-                return "9x9";
+                return selected;
             }
 
             return "5x5";
         }
 
-        private bool? GetSurveyedSelection()
-        {
-            if (radioSurveyed.Checked)
-            {
-                return true;
-            }
-
-            if (radioUnsurveyed.Checked)
-            {
-                return false;
-            }
-
-            return null;
-        }
-
-        private bool? GetInsertResidencesSelection()
-        {
-            return checkInsertResidences.CheckState == CheckState.Indeterminate
-                ? (bool?)null
-                : checkInsertResidences.Checked;
-        }
-
         private void LoadUserSettings()
         {
             var settings = Settings.Default;
-            txtSec.Text = settings.SectionKeySec ?? string.Empty;
-            txtTwp.Text = settings.SectionKeyTwp ?? string.Empty;
-            txtRge.Text = settings.SectionKeyRge ?? string.Empty;
-            txtMer.Text = settings.SectionKeyMer ?? string.Empty;
-
-            switch (settings.SurfDevScale)
+            var savedSize = settings.SurfDevSize;
+            if (!string.IsNullOrWhiteSpace(savedSize))
             {
-                case "20k":
-                    radioScale20.Checked = true;
-                    break;
-                case "25k":
-                    radioScale25.Checked = true;
-                    break;
-                default:
-                    radioScale50.Checked = true;
-                    break;
-            }
-
-            switch (settings.SurfDevSize)
-            {
-                case "3x3":
-                    radioSize3.Checked = true;
-                    break;
-                case "7x7":
-                    radioSize7.Checked = true;
-                    break;
-                case "9x9":
-                    radioSize9.Checked = true;
-                    break;
-                default:
-                    radioSize5.Checked = true;
-                    break;
-            }
-
-            if (settings.SurfDevSurveyed.HasValue)
-            {
-                if (settings.SurfDevSurveyed.Value)
+                var index = comboGridSize.FindStringExact(savedSize);
+                if (index >= 0)
                 {
-                    radioSurveyed.Checked = true;
-                }
-                else
-                {
-                    radioUnsurveyed.Checked = true;
+                    comboGridSize.SelectedIndex = index;
+                    return;
                 }
             }
-            else
-            {
-                radioUnsurveyed.Checked = true;
-            }
 
-            switch (settings.SurfDevInsertResidences)
-            {
-                case true:
-                    checkInsertResidences.Checked = true;
-                    break;
-                case false:
-                    checkInsertResidences.Checked = false;
-                    break;
-                default:
-                    checkInsertResidences.CheckState = CheckState.Indeterminate;
-                    break;
-            }
+            comboGridSize.SelectedIndex = comboGridSize.FindStringExact("5x5");
         }
 
         private void SaveUserSettings()
         {
             var settings = Settings.Default;
-            settings.SectionKeySec = txtSec.Text?.Trim();
-            settings.SectionKeyTwp = txtTwp.Text?.Trim();
-            settings.SectionKeyRge = txtRge.Text?.Trim();
-            settings.SectionKeyMer = txtMer.Text?.Trim();
-            settings.SurfDevScale = GetScaleSelection();
             settings.SurfDevSize = GetSurfaceSizeSelection();
-            var surveyed = GetSurveyedSelection();
-            settings.SurfDevSurveyed = surveyed;
-
-            var insert = GetInsertResidencesSelection();
-            settings.SurfDevInsertResidences = insert;
             settings.Save();
+        }
+
+        private void InitializeGridSizeOptions()
+        {
+            comboGridSize.Items.Clear();
+            comboGridSize.Items.AddRange(new object[]
+            {
+                "3x3",
+                "5x5",
+                "7x7",
+                "9x9"
+            });
+
+            if (comboGridSize.SelectedIndex < 0)
+            {
+                comboGridSize.SelectedIndex = comboGridSize.FindStringExact("5x5");
+            }
         }
     }
 }
