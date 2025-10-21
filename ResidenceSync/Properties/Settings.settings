@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)">
+  <Profiles />
+  <Settings>
+    <Setting Name="SectionKeySec" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="SectionKeyTwp" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="SectionKeyRge" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="SectionKeyMer" Type="System.String" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="SurfDevScale" Type="System.String" Scope="User">
+      <Value Profile="(Default)">50k</Value>
+    </Setting>
+    <Setting Name="SurfDevSize" Type="System.String" Scope="User">
+      <Value Profile="(Default)">5x5</Value>
+    </Setting>
+    <Setting Name="SurfDevSurveyed" Type="System.Nullable`1[System.Boolean]" Scope="User">
+      <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="SurfDevInsertResidences" Type="System.Nullable`1[System.Boolean]" Scope="User">
+      <Value Profile="(Default)">False</Value>
+    </Setting>
+  </Settings>
+</SettingsFile>
