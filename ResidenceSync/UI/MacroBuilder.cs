@@ -56,7 +56,7 @@ namespace ResidenceSync.UI
             macro = AppendIfPresent(macro, twp);
             macro = AppendIfPresent(macro, rge);
             macro = AppendIfPresent(macro, mer);
-            macro = AppendIfPresent(macro, size);
+            _ = size; // size is prompted later; keep parameter for compatibility
             macro = AppendIfPresent(macro, scale);
 
             if (isSurveyed.HasValue)
