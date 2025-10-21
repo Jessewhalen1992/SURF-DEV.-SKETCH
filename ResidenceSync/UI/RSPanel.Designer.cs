@@ -251,12 +251,14 @@ namespace ResidenceSync.UI
             // labelInsertResidences
             //
             this.labelInsertResidences.Anchor = System.Windows.Forms.AnchorStyles.Left;
-            this.labelInsertResidences.AutoSize = true;
+            this.labelInsertResidences.AutoSize = false;
             this.labelInsertResidences.Location = new System.Drawing.Point(3, 219);
             this.labelInsertResidences.Name = "labelInsertResidences";
             this.labelInsertResidences.Size = new System.Drawing.Size(101, 15);
             this.labelInsertResidences.TabIndex = 14;
             this.labelInsertResidences.Text = "Insert residences";
+            this.labelInsertResidences.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.labelInsertResidences.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             //
             // comboInsertResidences
             //
@@ -323,11 +325,12 @@ namespace ResidenceSync.UI
             // lblStatus
             // 
             this.lblStatus.AutoEllipsis = true;
-            this.lblStatus.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.lblStatus.AutoSize = true;
+            this.lblStatus.Dock = System.Windows.Forms.DockStyle.Top;
             this.lblStatus.Location = new System.Drawing.Point(3, 318);
-            this.lblStatus.Margin = new System.Windows.Forms.Padding(3, 0, 3, 3);
+            this.lblStatus.Margin = new System.Windows.Forms.Padding(3, 3, 3, 3);
             this.lblStatus.Name = "lblStatus";
-            this.lblStatus.Size = new System.Drawing.Size(314, 82);
+            this.lblStatus.Size = new System.Drawing.Size(314, 15);
             this.lblStatus.TabIndex = 2;
             this.lblStatus.Text = "Ready";
             this.lblStatus.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
