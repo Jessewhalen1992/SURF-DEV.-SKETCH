@@ -11,12 +11,35 @@ namespace ResidenceSync.UI
         public RSPanel()
         {
             InitializeComponent();
+            NormalizeTableChildren(); // ensure no child forces row growth
             InitializeGridSizeOptions();
             InitializeScaleOptions();
             InitializeSurveyedOptions();
             InitializeInsertResidencesOptions();
             LoadUserSettings();
         }
+
+        private void RSPanel_Load(object sender, EventArgs e)
+        {
+            // keep status row collapsed unless you set text/Visible=true later
+            if (this.tableLayoutMain.RowStyles.Count >= 3)
+            {
+                this.tableLayoutMain.RowStyles[2].SizeType = System.Windows.Forms.SizeType.Absolute;
+                this.tableLayoutMain.RowStyles[2].Height = 0F;
+            }
+        }
+
+        private void NormalizeTableChildren()
+        {
+            foreach (Control c in tableSurfDev.Controls)
+            {
+                c.AutoSize = false;
+                c.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top; // not Bottom
+                c.Margin = new Padding(3);
+                if (c is TextBox tb) tb.Multiline = false;
+            }
+        }
+
 
         private void btnBuildSection_Click(object sender, EventArgs e)
         {
@@ -269,6 +292,16 @@ namespace ResidenceSync.UI
             {
                 comboBox.SelectedIndex = 0;
             }
+        }
+
+        private void labelSurveyed_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void tableSurfDev_Paint(object sender, PaintEventArgs e)
+        {
+
         }
     }
 }
