@@ -29,7 +29,7 @@ ResidenceSync is an AutoCAD .NET plugin that synchronizes residence locations be
    - Pick the Top-Left and Top-Right points on the scaled sketch.
    - Select the actual section polyline to determine the true corners.
    - Select residence block references within the sketch. Their insertion points are mapped back to true section space and added to the master drawing as DBPoints on layer `Z-RESIDENCE`.
-   - The master drawing is stored at `C:\_CG_SHARED\Master_Residences.dwg` (update the constant in code if your environment differs).
+   - The master drawing is stored at `M:\Drafting\_SHARED FILES\_CG_SHARED\Master_Residences.dwg` (update the constant in code if your environment differs).
 
 ## Similarity Transform Details
 - The transform uses two reference corner pairs (true section TL/TR and sketch TL/TR) to compute scale, rotation, and translation.
@@ -40,7 +40,7 @@ ResidenceSync is an AutoCAD .NET plugin that synchronizes residence locations be
 - Build succeeds in Release mode and copies the DLL to the desktop bin folder.
 - In AutoCAD, `PULLRES` and `PUSHRES` execute without exceptions when provided valid inputs.
 - `PULLRES` inserts visible DBPoints on layer `Z-RESIDENCE` in the sketch.
-- `PUSHRES` creates/updates `C:\_CG_SHARED\Master_Residences.dwg` and increases the total residence point count.
+- `PUSHRES` creates/updates `M:\Drafting\_SHARED FILES\_CG_SHARED\Master_Residences.dwg` and increases the total residence point count.
 
 ## Future Enhancements
 - Replace DBPoints with a dedicated RESIDENCE block containing attributes (ID/NAME/DATE).

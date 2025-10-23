@@ -25,8 +25,8 @@ namespace ResidenceSync
 {
     public class ResidenceSyncCommands
     {
-        private const string MASTER_POINTS_PATH = @"C:\_CG_SHARED\Master_Residences.dwg";
-        private const string MASTER_SECTIONS_PATH = @"C:\_CG_SHARED\Master_Sections.dwg";
+        private const string MASTER_POINTS_PATH = @"M:\Drafting\_SHARED FILES\_CG_SHARED\Master_Residences.dwg";
+        private const string MASTER_SECTIONS_PATH = @"M:\Drafting\_SHARED FILES\_CG_SHARED\Master_Sections.dwg";
         private const string PREFERRED_OD_TABLE = "SECTIONS";
         private const string RESIDENCE_LAYER = "Z-RESIDENCE";
 
