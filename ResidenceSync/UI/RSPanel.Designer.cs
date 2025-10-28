@@ -72,7 +72,7 @@ namespace ResidenceSync.UI
             this.groupSurfDev.MinimumSize = new System.Drawing.Size(320, 220);
             this.groupSurfDev.Name = "groupSurfDev";
             this.groupSurfDev.Padding = new System.Windows.Forms.Padding(8, 6, 8, 8);
-            this.groupSurfDev.Size = new System.Drawing.Size(320, 339);
+            this.groupSurfDev.Size = new System.Drawing.Size(320, 319);
             this.groupSurfDev.TabIndex = 0;
             this.groupSurfDev.TabStop = false;
             this.groupSurfDev.Text = "SURFDEV Options";
@@ -100,7 +100,7 @@ namespace ResidenceSync.UI
             this.tableSurfDev.Controls.Add(this.comboInsertResidences, 1, 7);
             this.tableSurfDev.Dock = System.Windows.Forms.DockStyle.Fill;
             this.tableSurfDev.GrowStyle = System.Windows.Forms.TableLayoutPanelGrowStyle.FixedSize;
-            this.tableSurfDev.Location = new System.Drawing.Point(8, 22);
+            this.tableSurfDev.Location = new System.Drawing.Point(8, 30);
             this.tableSurfDev.Name = "tableSurfDev";
             this.tableSurfDev.RowCount = 8;
             this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
@@ -111,7 +111,7 @@ namespace ResidenceSync.UI
             this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
             this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
             this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
-            this.tableSurfDev.Size = new System.Drawing.Size(304, 309);
+            this.tableSurfDev.Size = new System.Drawing.Size(304, 281);
             this.tableSurfDev.TabIndex = 0;
             this.tableSurfDev.Paint += new System.Windows.Forms.PaintEventHandler(this.tableSurfDev_Paint);
             // 
@@ -119,9 +119,9 @@ namespace ResidenceSync.UI
             // 
             this.labelSection.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelSection.AutoSize = true;
-            this.labelSection.Location = new System.Drawing.Point(3, 11);
+            this.labelSection.Location = new System.Drawing.Point(3, 5);
             this.labelSection.Name = "labelSection";
-            this.labelSection.Size = new System.Drawing.Size(46, 15);
+            this.labelSection.Size = new System.Drawing.Size(70, 25);
             this.labelSection.TabIndex = 0;
             this.labelSection.Text = "Section";
             // 
@@ -130,70 +130,70 @@ namespace ResidenceSync.UI
             this.textSection.Dock = System.Windows.Forms.DockStyle.Fill;
             this.textSection.Location = new System.Drawing.Point(113, 3);
             this.textSection.Name = "textSection";
-            this.textSection.Size = new System.Drawing.Size(188, 23);
+            this.textSection.Size = new System.Drawing.Size(188, 31);
             this.textSection.TabIndex = 1;
             // 
             // labelTownship
             // 
             this.labelTownship.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelTownship.AutoSize = true;
-            this.labelTownship.Location = new System.Drawing.Point(3, 49);
+            this.labelTownship.Location = new System.Drawing.Point(3, 40);
             this.labelTownship.Name = "labelTownship";
-            this.labelTownship.Size = new System.Drawing.Size(58, 15);
+            this.labelTownship.Size = new System.Drawing.Size(86, 25);
             this.labelTownship.TabIndex = 2;
             this.labelTownship.Text = "Township";
             // 
             // textTownship
             // 
             this.textTownship.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textTownship.Location = new System.Drawing.Point(113, 41);
+            this.textTownship.Location = new System.Drawing.Point(113, 38);
             this.textTownship.Name = "textTownship";
-            this.textTownship.Size = new System.Drawing.Size(188, 23);
+            this.textTownship.Size = new System.Drawing.Size(188, 31);
             this.textTownship.TabIndex = 3;
             // 
             // labelRange
             // 
             this.labelRange.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelRange.AutoSize = true;
-            this.labelRange.Location = new System.Drawing.Point(3, 87);
+            this.labelRange.Location = new System.Drawing.Point(3, 75);
             this.labelRange.Name = "labelRange";
-            this.labelRange.Size = new System.Drawing.Size(40, 15);
+            this.labelRange.Size = new System.Drawing.Size(62, 25);
             this.labelRange.TabIndex = 4;
             this.labelRange.Text = "Range";
             // 
             // textRange
             // 
             this.textRange.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textRange.Location = new System.Drawing.Point(113, 79);
+            this.textRange.Location = new System.Drawing.Point(113, 73);
             this.textRange.Name = "textRange";
-            this.textRange.Size = new System.Drawing.Size(188, 23);
+            this.textRange.Size = new System.Drawing.Size(188, 31);
             this.textRange.TabIndex = 5;
             // 
             // labelMeridian
             // 
             this.labelMeridian.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelMeridian.AutoSize = true;
-            this.labelMeridian.Location = new System.Drawing.Point(3, 125);
+            this.labelMeridian.Location = new System.Drawing.Point(3, 110);
             this.labelMeridian.Name = "labelMeridian";
-            this.labelMeridian.Size = new System.Drawing.Size(54, 15);
+            this.labelMeridian.Size = new System.Drawing.Size(81, 25);
             this.labelMeridian.TabIndex = 6;
             this.labelMeridian.Text = "Meridian";
             // 
             // textMeridian
             // 
             this.textMeridian.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textMeridian.Location = new System.Drawing.Point(113, 117);
+            this.textMeridian.Location = new System.Drawing.Point(113, 108);
             this.textMeridian.Name = "textMeridian";
-            this.textMeridian.Size = new System.Drawing.Size(188, 23);
+            this.textMeridian.Size = new System.Drawing.Size(188, 31);
             this.textMeridian.TabIndex = 7;
             // 
             // labelGridSize
             // 
             this.labelGridSize.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelGridSize.AutoSize = true;
-            this.labelGridSize.Location = new System.Drawing.Point(3, 163);
+            this.labelGridSize.Location = new System.Drawing.Point(3, 145);
             this.labelGridSize.Name = "labelGridSize";
-            this.labelGridSize.Size = new System.Drawing.Size(51, 15);
+            this.labelGridSize.Size = new System.Drawing.Size(79, 25);
             this.labelGridSize.TabIndex = 8;
             this.labelGridSize.Text = "Grid size";
             // 
@@ -202,18 +202,18 @@ namespace ResidenceSync.UI
             this.comboGridSize.Dock = System.Windows.Forms.DockStyle.Fill;
             this.comboGridSize.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.comboGridSize.FormattingEnabled = true;
-            this.comboGridSize.Location = new System.Drawing.Point(113, 155);
+            this.comboGridSize.Location = new System.Drawing.Point(113, 143);
             this.comboGridSize.Name = "comboGridSize";
-            this.comboGridSize.Size = new System.Drawing.Size(188, 23);
+            this.comboGridSize.Size = new System.Drawing.Size(188, 33);
             this.comboGridSize.TabIndex = 9;
             // 
             // labelScale
             // 
             this.labelScale.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelScale.AutoSize = true;
-            this.labelScale.Location = new System.Drawing.Point(3, 201);
+            this.labelScale.Location = new System.Drawing.Point(3, 180);
             this.labelScale.Name = "labelScale";
-            this.labelScale.Size = new System.Drawing.Size(34, 15);
+            this.labelScale.Size = new System.Drawing.Size(52, 25);
             this.labelScale.TabIndex = 10;
             this.labelScale.Text = "Scale";
             // 
@@ -222,18 +222,18 @@ namespace ResidenceSync.UI
             this.comboScale.Dock = System.Windows.Forms.DockStyle.Fill;
             this.comboScale.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.comboScale.FormattingEnabled = true;
-            this.comboScale.Location = new System.Drawing.Point(113, 193);
+            this.comboScale.Location = new System.Drawing.Point(113, 178);
             this.comboScale.Name = "comboScale";
-            this.comboScale.Size = new System.Drawing.Size(188, 23);
+            this.comboScale.Size = new System.Drawing.Size(188, 33);
             this.comboScale.TabIndex = 11;
             // 
             // label1
             // 
             this.label1.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(3, 239);
+            this.label1.Location = new System.Drawing.Point(3, 215);
             this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(55, 15);
+            this.label1.Size = new System.Drawing.Size(85, 25);
             this.label1.TabIndex = 16;
             this.label1.Text = "Surveyed";
             // 
@@ -242,18 +242,18 @@ namespace ResidenceSync.UI
             this.comboSurveyed.Dock = System.Windows.Forms.DockStyle.Fill;
             this.comboSurveyed.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.comboSurveyed.FormattingEnabled = true;
-            this.comboSurveyed.Location = new System.Drawing.Point(113, 231);
+            this.comboSurveyed.Location = new System.Drawing.Point(113, 213);
             this.comboSurveyed.Name = "comboSurveyed";
-            this.comboSurveyed.Size = new System.Drawing.Size(188, 23);
+            this.comboSurveyed.Size = new System.Drawing.Size(188, 33);
             this.comboSurveyed.TabIndex = 13;
             // 
             // labelInsertRes
             // 
             this.labelInsertRes.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelInsertRes.AutoSize = true;
-            this.labelInsertRes.Location = new System.Drawing.Point(3, 280);
+            this.labelInsertRes.Location = new System.Drawing.Point(3, 250);
             this.labelInsertRes.Name = "labelInsertRes";
-            this.labelInsertRes.Size = new System.Drawing.Size(49, 15);
+            this.labelInsertRes.Size = new System.Drawing.Size(74, 25);
             this.labelInsertRes.TabIndex = 12;
             this.labelInsertRes.Text = "Inc.Res?";
             this.labelInsertRes.Click += new System.EventHandler(this.labelSurveyed_Click);
@@ -263,9 +263,9 @@ namespace ResidenceSync.UI
             this.comboInsertResidences.Dock = System.Windows.Forms.DockStyle.Fill;
             this.comboInsertResidences.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.comboInsertResidences.FormattingEnabled = true;
-            this.comboInsertResidences.Location = new System.Drawing.Point(113, 269);
+            this.comboInsertResidences.Location = new System.Drawing.Point(113, 248);
             this.comboInsertResidences.Name = "comboInsertResidences";
-            this.comboInsertResidences.Size = new System.Drawing.Size(188, 23);
+            this.comboInsertResidences.Size = new System.Drawing.Size(188, 33);
             this.comboInsertResidences.TabIndex = 15;
             // 
             // flowButtons
@@ -276,10 +276,10 @@ namespace ResidenceSync.UI
             this.flowButtons.Controls.Add(this.btnPushResidences);
             this.flowButtons.Controls.Add(this.btnBuildSurface);
             this.flowButtons.Dock = System.Windows.Forms.DockStyle.Top;
-            this.flowButtons.Location = new System.Drawing.Point(3, 348);
+            this.flowButtons.Location = new System.Drawing.Point(3, 328);
             this.flowButtons.Margin = new System.Windows.Forms.Padding(3, 3, 3, 0);
             this.flowButtons.Name = "flowButtons";
-            this.flowButtons.Size = new System.Drawing.Size(314, 31);
+            this.flowButtons.Size = new System.Drawing.Size(314, 41);
             this.flowButtons.TabIndex = 1;
             this.flowButtons.WrapContents = false;
             // 
@@ -289,7 +289,7 @@ namespace ResidenceSync.UI
             this.btnBuildSection.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.btnBuildSection.Location = new System.Drawing.Point(3, 3);
             this.btnBuildSection.Name = "btnBuildSection";
-            this.btnBuildSection.Size = new System.Drawing.Size(86, 25);
+            this.btnBuildSection.Size = new System.Drawing.Size(124, 35);
             this.btnBuildSection.TabIndex = 0;
             this.btnBuildSection.Text = "Build Section";
             this.btnBuildSection.UseVisualStyleBackColor = true;
@@ -299,9 +299,9 @@ namespace ResidenceSync.UI
             // 
             this.btnPushResidences.AutoSize = true;
             this.btnPushResidences.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-            this.btnPushResidences.Location = new System.Drawing.Point(95, 3);
+            this.btnPushResidences.Location = new System.Drawing.Point(133, 3);
             this.btnPushResidences.Name = "btnPushResidences";
-            this.btnPushResidences.Size = new System.Drawing.Size(104, 25);
+            this.btnPushResidences.Size = new System.Drawing.Size(151, 35);
             this.btnPushResidences.TabIndex = 1;
             this.btnPushResidences.Text = "Push Residences";
             this.btnPushResidences.UseVisualStyleBackColor = true;
@@ -311,9 +311,9 @@ namespace ResidenceSync.UI
             // 
             this.btnBuildSurface.AutoSize = true;
             this.btnBuildSurface.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-            this.btnBuildSurface.Location = new System.Drawing.Point(205, 3);
+            this.btnBuildSurface.Location = new System.Drawing.Point(290, 3);
             this.btnBuildSurface.Name = "btnBuildSurface";
-            this.btnBuildSurface.Size = new System.Drawing.Size(86, 25);
+            this.btnBuildSurface.Size = new System.Drawing.Size(124, 35);
             this.btnBuildSurface.TabIndex = 2;
             this.btnBuildSurface.Text = "Build Surface";
             this.btnBuildSurface.UseVisualStyleBackColor = true;
@@ -324,17 +324,17 @@ namespace ResidenceSync.UI
             this.lblStatus.AutoEllipsis = true;
             this.lblStatus.AutoSize = true;
             this.lblStatus.Dock = System.Windows.Forms.DockStyle.Top;
-            this.lblStatus.Location = new System.Drawing.Point(3, 382);
+            this.lblStatus.Location = new System.Drawing.Point(3, 372);
             this.lblStatus.Margin = new System.Windows.Forms.Padding(3);
             this.lblStatus.Name = "lblStatus";
-            this.lblStatus.Size = new System.Drawing.Size(314, 15);
+            this.lblStatus.Size = new System.Drawing.Size(314, 25);
             this.lblStatus.TabIndex = 2;
             this.lblStatus.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             this.lblStatus.Visible = false;
             // 
             // RSPanel
             // 
-            this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
+            this.AutoScaleDimensions = new System.Drawing.SizeF(10F, 25F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.Controls.Add(this.tableLayoutMain);
             this.Font = new System.Drawing.Font("Segoe UI", 9F);
