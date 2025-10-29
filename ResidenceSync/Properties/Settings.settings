@@ -2,6 +2,9 @@
 <SettingsFile xmlns="http://schemas.microsoft.com/VisualStudio/2004/01/settings" CurrentProfile="(Default)">
   <Profiles />
   <Settings>
+    <Setting Name="SectionKeyZone" Type="System.String" Scope="User">
+      <Value Profile="(Default)">11</Value>
+    </Setting>
     <Setting Name="SectionKeySec" Type="System.String" Scope="User">
       <Value Profile="(Default)" />
     </Setting>

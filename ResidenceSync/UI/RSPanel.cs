@@ -2,6 +2,7 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 using ResidenceSync.Properties;
 using System;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace ResidenceSync.UI
@@ -12,6 +13,7 @@ namespace ResidenceSync.UI
         {
             InitializeComponent();
             NormalizeTableChildren(); // ensure no child forces row growth
+            InitializeZoneOptions();
             InitializeGridSizeOptions();
             InitializeScaleOptions();
             InitializeSurveyedOptions();
@@ -45,6 +47,7 @@ namespace ResidenceSync.UI
         {
             SaveUserSettings();
             var macro = MacroBuilder.BuildBuildSec(
+                GetZoneSelectionValue(),
                 GetTextValue(textSection),
                 GetTextValue(textTownship),
                 GetTextValue(textRange),
@@ -55,7 +58,7 @@ namespace ResidenceSync.UI
         private void btnPushResidences_Click(object sender, EventArgs e)
         {
             SaveUserSettings();
-            var macro = MacroBuilder.BuildPushResS();
+            var macro = MacroBuilder.BuildPushResS(GetZoneSelectionValue());
             SendMacro(macro);
         }
 
@@ -63,6 +66,7 @@ namespace ResidenceSync.UI
         {
             SaveUserSettings();
             var macro = MacroBuilder.BuildSurfDev(
+                GetZoneSelectionValue(),
                 GetTextValue(textSection),
                 GetTextValue(textTownship),
                 GetTextValue(textRange),
@@ -148,6 +152,7 @@ namespace ResidenceSync.UI
         private void LoadUserSettings()
         {
             var settings = Settings.Default;
+            SelectZoneValue(settings.SectionKeyZone ?? "11");
             textSection.Text = settings.SectionKeySec ?? string.Empty;
             textTownship.Text = settings.SectionKeyTwp ?? string.Empty;
             textRange.Text = settings.SectionKeyRge ?? string.Empty;
@@ -203,6 +208,7 @@ namespace ResidenceSync.UI
         private void SaveUserSettings()
         {
             var settings = Settings.Default;
+            settings.SectionKeyZone = GetZoneSelectionValue() ?? "11";
             settings.SectionKeySec = textSection.Text?.Trim();
             settings.SectionKeyTwp = textTownship.Text?.Trim();
             settings.SectionKeyRge = textRange.Text?.Trim();
@@ -268,6 +274,18 @@ namespace ResidenceSync.UI
             SelectComboValue(comboInsertResidences, "No");
         }
 
+        private void InitializeZoneOptions()
+        {
+            comboZone.Items.Clear();
+            comboZone.Items.Add(new ZoneOption("Zone 11", "11"));
+            comboZone.Items.Add(new ZoneOption("Zone 12", "12"));
+
+            if (comboZone.Items.Count > 0)
+            {
+                comboZone.SelectedIndex = 0;
+            }
+        }
+
         private void SelectComboValue(ComboBox comboBox, string value)
         {
             if (string.IsNullOrEmpty(value))
@@ -302,6 +320,69 @@ namespace ResidenceSync.UI
         private void tableSurfDev_Paint(object sender, PaintEventArgs e)
         {
 
+        }
+
+        private string GetZoneSelectionValue()
+        {
+            if (comboZone.SelectedItem is ZoneOption option)
+            {
+                return option.Value;
+            }
+
+            if (comboZone.SelectedItem is string text)
+            {
+                return ExtractDigits(text);
+            }
+
+            return "11";
+        }
+
+        private void SelectZoneValue(string zoneValue)
+        {
+            if (string.IsNullOrWhiteSpace(zoneValue))
+            {
+                if (comboZone.Items.Count > 0)
+                {
+                    comboZone.SelectedIndex = 0;
+                }
+                return;
+            }
+
+            for (int i = 0; i < comboZone.Items.Count; i++)
+            {
+                if (comboZone.Items[i] is ZoneOption option &&
+                    string.Equals(option.Value, zoneValue, StringComparison.OrdinalIgnoreCase))
+                {
+                    comboZone.SelectedIndex = i;
+                    return;
+                }
+            }
+
+            if (comboZone.Items.Count > 0)
+            {
+                comboZone.SelectedIndex = 0;
+            }
+        }
+
+        private string ExtractDigits(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return null;
+            var digits = new string(input.Where(char.IsDigit).ToArray());
+            return string.IsNullOrEmpty(digits) ? null : digits;
+        }
+
+        private sealed class ZoneOption
+        {
+            public ZoneOption(string display, string value)
+            {
+                Display = display;
+                Value = value;
+            }
+
+            public string Display { get; }
+            public string Value { get; }
+
+            public override string ToString() => Display;
         }
     }
 }

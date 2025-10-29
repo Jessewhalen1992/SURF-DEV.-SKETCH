@@ -25,8 +25,44 @@ namespace ResidenceSync
 {
     public class ResidenceSyncCommands
     {
-        private const string MASTER_POINTS_PATH = @"M:\Drafting\_SHARED FILES\_CG_SHARED\Master_Residences.dwg";
-        private const string MASTER_SECTIONS_PATH = @"M:\Drafting\_SHARED FILES\_CG_SHARED\Master_Sections.dwg";
+        private const string MASTER_FILES_DIRECTORY = @"M:\Drafting\_SHARED FILES\_CG_SHARED";
+
+        private enum CoordinateZone
+        {
+            Zone11 = 11,
+            Zone12 = 12
+        }
+
+        private static string FormatZoneNumber(CoordinateZone zone)
+            => ((int)zone).ToString(CultureInfo.InvariantCulture);
+
+        private static string GetMasterResidencesPath(CoordinateZone zone)
+            => Path.Combine(MASTER_FILES_DIRECTORY, $"Master_Residences_Z{FormatZoneNumber(zone)}.dwg");
+
+        private static string GetMasterSectionsPath(CoordinateZone zone)
+            => Path.Combine(MASTER_FILES_DIRECTORY, $"Master_Sections_Z{FormatZoneNumber(zone)}.dwg");
+
+        private static string GetMasterSectionsIndexJsonPath(CoordinateZone zone)
+            => Path.Combine(MASTER_FILES_DIRECTORY, $"Master_Sections.index_Z{FormatZoneNumber(zone)}.jsonl");
+
+        private static string GetMasterSectionsIndexCsvPath(CoordinateZone zone)
+            => Path.Combine(MASTER_FILES_DIRECTORY, $"Master_Sections.index_Z{FormatZoneNumber(zone)}.csv");
+
+        private static bool TryConvertToZone(int zoneNumber, out CoordinateZone zone)
+        {
+            switch (zoneNumber)
+            {
+                case 11:
+                    zone = CoordinateZone.Zone11;
+                    return true;
+                case 12:
+                    zone = CoordinateZone.Zone12;
+                    return true;
+                default:
+                    zone = default;
+                    return false;
+            }
+        }
         private const string PREFERRED_OD_TABLE = "SECTIONS";
         private const string RESIDENCE_LAYER = "Z-RESIDENCE";
 
@@ -86,21 +122,24 @@ namespace ResidenceSync
         {
             Editor ed = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
 
-            if (!File.Exists(MASTER_SECTIONS_PATH))
+            if (!PromptZone(ed, out CoordinateZone zone)) return;
+
+            string masterSectionsPath = GetMasterSectionsPath(zone);
+            if (!File.Exists(masterSectionsPath))
             {
-                ed?.WriteMessage($"\nRESINDEXV: Master sections DWG not found: {MASTER_SECTIONS_PATH}");
+                ed?.WriteMessage($"\nRESINDEXV: Master sections DWG not found: {masterSectionsPath}");
                 return;
             }
 
-            string outPath = Path.Combine(Path.GetDirectoryName(MASTER_SECTIONS_PATH) ?? "",
-                                          "Master_Sections.index.jsonl");
+            string outJsonPath = GetMasterSectionsIndexJsonPath(zone);
+            string outCsvPath = GetMasterSectionsIndexCsvPath(zone);
 
             DocumentCollection docs = AcadApp.DocumentManager;
-            Document master = GetOpenDocumentByPath(docs, MASTER_SECTIONS_PATH);
+            Document master = GetOpenDocumentByPath(docs, masterSectionsPath);
             bool openedHere = false;
             if (master == null)
             {
-                master = docs.Open(MASTER_SECTIONS_PATH, false);
+                master = docs.Open(masterSectionsPath, false);
                 openedHere = true;
             }
 
@@ -152,13 +191,22 @@ namespace ResidenceSync
                                             string twp = ReadOd(defs, rec, new[] { "TWP", "TOWNSHIP" }, MapValueToString);
                                             string rge = ReadOd(defs, rec, new[] { "RGE", "RANGE" }, MapValueToString);
                                             string mer = ReadOd(defs, rec, new[] { "MER", "MERIDIAN", "M" }, MapValueToString);
-                                            if (string.IsNullOrWhiteSpace(sec) ||
-                                                string.IsNullOrWhiteSpace(twp) ||
-                                                string.IsNullOrWhiteSpace(rge) ||
-                                                string.IsNullOrWhiteSpace(mer))
+
+                                            string normSec = NormStr(sec);
+                                            string normTwp = NormStr(twp);
+                                            string normRge = NormStr(rge);
+                                            string normMer = NormStr(mer);
+
+                                            if (string.IsNullOrWhiteSpace(normSec) ||
+                                                string.IsNullOrWhiteSpace(normTwp) ||
+                                                string.IsNullOrWhiteSpace(normRge) ||
+                                                string.IsNullOrWhiteSpace(normMer))
                                                 continue;
 
-                                            string key = $"{NormStr(sec)}|{NormStr(twp)}|{NormStr(rge)}|{NormStr(mer)}";
+                                            if (!MeridianMatchesZone(zone, normMer))
+                                                continue;
+
+                                            string key = $"{normSec}|{normTwp}|{normRge}|{normMer}";
 
                                             double area = (aabb.MaxX - aabb.MinX) * (aabb.MaxY - aabb.MinY);
                                             if (!bestByKey.TryGetValue(key, out var cur) ||
@@ -178,11 +226,15 @@ namespace ResidenceSync
                         tr.Commit();
                     }
 
-                    // Write JSONL with all vertices of the chosen polyline per key
-                    Directory.CreateDirectory(Path.GetDirectoryName(outPath) ?? "");
-                    using (var sw = new StreamWriter(new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.Read)))
+                    // Write JSONL + CSV with all vertices of the chosen polyline per key
+                    Directory.CreateDirectory(Path.GetDirectoryName(outJsonPath) ?? "");
+                    Directory.CreateDirectory(Path.GetDirectoryName(outCsvPath) ?? "");
+                    using (var swJson = new StreamWriter(new FileStream(outJsonPath, FileMode.Create, FileAccess.Write, FileShare.Read)))
+                    using (var swCsv = new StreamWriter(new FileStream(outCsvPath, FileMode.Create, FileAccess.Write, FileShare.Read)))
                     using (Transaction tr = master.TransactionManager.StartTransaction())
                     {
+                        swCsv.WriteLine("ZONE,SEC,TWP,RGE,MER,minx,miny,maxx,maxy");
+
                         foreach (var kv in bestByKey)
                         {
                             var ent = tr.GetObject(kv.Value.entId, DbOpenMode.ForRead) as Entity;
@@ -222,13 +274,21 @@ namespace ResidenceSync
 
                             var aabb = kv.Value.aabb;
                             string[] parts = kv.Key.Split('|'); // SEC|TWP|RGE|MER
-                            string sec = parts[0], twp = parts[1], rge = parts[2], mer = parts[3];
+                            string sec = parts.Length > 0 ? parts[0] : string.Empty;
+                            string twp = parts.Length > 1 ? parts[1] : string.Empty;
+                            string rge = parts.Length > 2 ? parts[2] : string.Empty;
+                            string mer = parts.Length > 3 ? parts[3] : string.Empty;
+
+                            var ic = CultureInfo.InvariantCulture;
+                            swCsv.WriteLine(string.Format(ic, "{0},{1},{2},{3},{4},{5},{6},{7},{8}",
+                                (int)zone, sec, twp, rge, mer,
+                                aabb.MinX, aabb.MinY, aabb.MaxX, aabb.MaxY));
 
                             // Build JSON (no external deps)
-                            var ic = CultureInfo.InvariantCulture;
                             var sb = new System.Text.StringBuilder(256 + verts.Count * 24);
                             sb.Append('{');
-                            sb.AppendFormat(ic, "\"SEC\":\"{0}\",\"TWP\":\"{1}\",\"RGE\":\"{2}\",\"MER\":\"{3}\",", sec, twp, rge, mer);
+                            sb.AppendFormat(ic, "\"ZONE\":{0},\"SEC\":\"{1}\",\"TWP\":\"{2}\",\"RGE\":\"{3}\",\"MER\":\"{4}\",",
+                                (int)zone, sec, twp, rge, mer);
                             sb.AppendFormat(ic, "\"AABB\":{{\"minx\":{0},\"miny\":{1},\"maxx\":{2},\"maxy\":{3}}},",
                                 aabb.MinX, aabb.MinY, aabb.MaxX, aabb.MaxY);
                             sb.AppendFormat("\"Closed\":{0},", closed ? "true" : "false");
@@ -241,11 +301,11 @@ namespace ResidenceSync
                             }
                             sb.Append("]}");
 
-                            sw.WriteLine(sb.ToString());
+                            swJson.WriteLine(sb.ToString());
                         }
                     }
 
-                    ed?.WriteMessage($"\nRESINDEXV: Wrote {bestByKey.Count} section outlines → {outPath}");
+                    ed?.WriteMessage($"\nRESINDEXV: Wrote {bestByKey.Count} section outline(s) → {outJsonPath} (JSON) and {outCsvPath} (CSV).");
                 }
             }
             catch (System.Exception ex)
@@ -273,11 +333,10 @@ namespace ResidenceSync
 
             if (!PromptSectionKey(ed, out SectionKey key)) return;
 
-            string idxPath = Path.Combine(Path.GetDirectoryName(MASTER_SECTIONS_PATH) ?? "",
-                                          "Master_Sections.index.jsonl");
+            string idxPath = GetMasterSectionsIndexJsonPath(key.Zone);
             if (!File.Exists(idxPath))
             {
-                ed.WriteMessage("\nBUILDSEC: Vertex index not found. Run RESINDEXV first.");
+                ed.WriteMessage($"\nBUILDSEC: Vertex index not found for Zone {FormatZoneNumber(key.Zone)}. Run RESINDEXV first.");
                 return;
             }
 
@@ -319,8 +378,10 @@ namespace ResidenceSync
                     ms.AppendEntity(qh); tr.AddNewlyCreatedDBObject(qh, true);
                 }
 
+                string masterResidencesPath = GetMasterResidencesPath(key.Zone);
+
                 // Residences inside this polygon from master file
-                var residences = ReadPointsFromMaster(out bool exists);
+                var residences = ReadPointsFromMaster(masterResidencesPath, out bool exists);
                 if (exists && residences.Count > 0)
                 {
                     int added = 0;
@@ -338,7 +399,7 @@ namespace ResidenceSync
                 }
                 else
                 {
-                    ed.WriteMessage("\nBUILDSEC: No residences master file or none found.");
+                    ed.WriteMessage($"\nBUILDSEC: No residences found in {masterResidencesPath}.");
                 }
 
                 tr.Commit();
@@ -359,17 +420,18 @@ namespace ResidenceSync
 
             if (!PromptSectionKey(ed, out SectionKey key)) return;
 
-            string idxPath = Path.Combine(Path.GetDirectoryName(MASTER_SECTIONS_PATH) ?? "",
-                                          "Master_Sections.index.jsonl");
+            string idxPath = GetMasterSectionsIndexJsonPath(key.Zone);
             if (!TryReadSectionFromJsonl(idxPath, key, out VertexIndexRecord rec))
             {
-                ed.WriteMessage("\nPULLRESV: Section not found in vertex index. Run RESINDEXV first.");
+                ed.WriteMessage($"\nPULLRESV: Section not found in vertex index for Zone {FormatZoneNumber(key.Zone)}. Run RESINDEXV first.");
                 return;
             }
 
-            if (!File.Exists(MASTER_POINTS_PATH))
+            string masterResidencesPath = GetMasterResidencesPath(key.Zone);
+
+            if (!File.Exists(masterResidencesPath))
             {
-                ed.WriteMessage("\nPULLRESV: Master residences DWG not found.");
+                ed.WriteMessage($"\nPULLRESV: Master residences DWG not found: {masterResidencesPath}.");
                 return;
             }
 
@@ -386,7 +448,7 @@ namespace ResidenceSync
                 // Open master db and collect recognized residence blocks inside the section polygon
                 using (var masterDb = new Database(false, true))
                 {
-                    masterDb.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                    masterDb.ReadDwgFile(masterResidencesPath, FileOpenMode.OpenForReadAndAllShare, false, null);
                     masterDb.CloseInput(true);
 
                     // Collect only recognized residence BLOCKS (ignore legacy DBPOINTs here)
@@ -445,19 +507,25 @@ namespace ResidenceSync
             if (doc == null) return;
             var ed = doc.Editor;
 
-            if (IsMasterPointsOpen())
+            if (!PromptSectionKey(ed, out SectionKey key)) return;
+
+            string masterResidencesPath = GetMasterResidencesPath(key.Zone);
+            if (IsMasterPointsOpen(masterResidencesPath))
             {
-                ed.WriteMessage("\nPUSHRESS: 'Master_Residences.dwg' is open. Close it and try again.");
+                ed.WriteMessage($"\nPUSHRESS: '{Path.GetFileName(masterResidencesPath)}' is open. Close it and try again.");
                 return;
             }
 
-            if (!PromptSectionKey(ed, out SectionKey key)) return;
+            if (!File.Exists(masterResidencesPath))
+            {
+                ed.WriteMessage($"\nPUSHRESS: Master residences DWG not found: {masterResidencesPath}.");
+                return;
+            }
 
-            string idxPath = Path.Combine(Path.GetDirectoryName(MASTER_SECTIONS_PATH) ?? "",
-                                          "Master_Sections.index.jsonl");
+            string idxPath = GetMasterSectionsIndexJsonPath(key.Zone);
             if (!TryReadSectionFromJsonl(idxPath, key, out VertexIndexRecord rec))
             {
-                ed.WriteMessage("\nPUSHRESS: Section not found in vertex index. Run RESINDEXV first.");
+                ed.WriteMessage($"\nPUSHRESS: Section not found in vertex index for Zone {FormatZoneNumber(key.Zone)}. Run RESINDEXV first.");
                 return;
             }
 
@@ -518,7 +586,7 @@ namespace ResidenceSync
 
             if (items.Count == 0) { ed.WriteMessage("\nPUSHRESS: No usable items."); return; }
 
-            var result = UpsertResidenceBlocksInMaster(items, jobFromThisDwg, ed);
+            var result = UpsertResidenceBlocksInMaster(items, jobFromThisDwg, masterResidencesPath, ed);
             ed.WriteMessage($"\nPUSHRESS: Finished — moved {result.moved}, inserted {result.inserted}. (Attrs only; master saved off-screen.)");
         }
         // Treat “inside OR on boundary within tol” as inside.
@@ -574,18 +642,17 @@ namespace ResidenceSync
             double secTextHt = (scaleKey == "50k") ? 15.0 : (scaleKey == "25k") ? 30.0 : 37.5;
 
             // Index path
-            string idxPath = Path.Combine(Path.GetDirectoryName(MASTER_SECTIONS_PATH) ?? "",
-                                          "Master_Sections.index.jsonl");
+            string idxPath = GetMasterSectionsIndexJsonPath(centerKey.Zone);
             if (!File.Exists(idxPath))
             {
-                ed.WriteMessage("\nSURFDEV: Vertex index not found. Run RESINDEXV first.");
+                ed.WriteMessage($"\nSURFDEV: Vertex index not found for Zone {FormatZoneNumber(centerKey.Zone)}. Run RESINDEXV first.");
                 return;
             }
 
             // Load center record
             if (!TryReadSectionFromJsonl(idxPath, centerKey, out VertexIndexRecord centerRec))
             {
-                ed.WriteMessage("\nSURFDEV: Center section not found in vertex index.");
+                ed.WriteMessage($"\nSURFDEV: Center section not found in vertex index for Zone {FormatZoneNumber(centerKey.Zone)}.");
                 return;
             }
 
@@ -639,7 +706,8 @@ namespace ResidenceSync
                 if (twp <= 0 || rge <= 0) return default(SectionKey);
 
                 int s = serp[targetRow, targetCol];
-                return new SectionKey(s.ToString(),
+                return new SectionKey(centerKey.Zone,
+                                      s.ToString(CultureInfo.InvariantCulture),
                                       twp.ToString(CultureInfo.InvariantCulture),
                                       rge.ToString(CultureInfo.InvariantCulture),
                                       centerKey.Meridian);
@@ -725,15 +793,17 @@ namespace ResidenceSync
 
                 if (insertResidences)
                 {
-                    if (!File.Exists(MASTER_POINTS_PATH))
+                    string masterResidencesPath = GetMasterResidencesPath(centerKey.Zone);
+
+                    if (!File.Exists(masterResidencesPath))
                     {
-                        ed.WriteMessage("\nSURFDEV: Master residences DWG not found; skipping residence insertion.");
+                        ed.WriteMessage($"\nSURFDEV: Master residences DWG not found ({masterResidencesPath}); skipping residence insertion.");
                     }
                     else
                     {
                         using (var masterDb = new Database(false, true))
                         {
-                            masterDb.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                            masterDb.ReadDwgFile(masterResidencesPath, FileOpenMode.OpenForReadAndAllShare, false, null);
                             masterDb.CloseInput(true);
 
                             ObjectIdCollection srcIds = CollectResidenceSourceIds(masterDb, sectionPolysMaster);
@@ -1058,21 +1128,21 @@ namespace ResidenceSync
         // ---------- UPSERT TO MASTER (SIDE DB, ATTRS ONLY) ----------
         // ---------- UPSERT TO MASTER (SIDE DB, ATTRS ONLY) ----------
         private (int moved, int inserted) UpsertResidenceBlocksInMaster(
-            List<PushItem> items, string jobFromThisDwg, Editor ed)
+            List<PushItem> items, string jobFromThisDwg, string masterPointsPath, Editor ed)
         {
             int moved = 0, inserted = 0;
 
             // Ensure file exists
-            if (!File.Exists(MASTER_POINTS_PATH))
+            if (!File.Exists(masterPointsPath))
             {
                 using (var newDb = new Database(true, true))
-                    newDb.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
+                    newDb.SaveAs(masterPointsPath, DwgVersion.Current);
             }
 
             // Open master DWG as side database (no UI)
             using (var masterDb = new Database(false, true))
             {
-                masterDb.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                masterDb.ReadDwgFile(masterPointsPath, FileOpenMode.OpenForReadAndAllShare, false, null);
                 masterDb.CloseInput(true);
 
                 using (var tr = masterDb.TransactionManager.StartTransaction())
@@ -1196,14 +1266,14 @@ namespace ResidenceSync
                 }
 
                 // Save side database back to disk (no UI)
-                masterDb.SaveAs(MASTER_POINTS_PATH, DwgVersion.Current);
+                masterDb.SaveAs(masterPointsPath, DwgVersion.Current);
             }
 
             return (moved, inserted);
         }
-        private bool IsMasterPointsOpen()
+        private bool IsMasterPointsOpen(string masterPointsPath)
         {
-            return GetOpenDocumentByPath(AcadApp.DocumentManager, MASTER_POINTS_PATH) != null;
+            return GetOpenDocumentByPath(AcadApp.DocumentManager, masterPointsPath) != null;
         }
         // For a NEW record (before AddRecord) – no UpdateRecord() needed
         private static void SetStringField(FieldDefinitions defs, Record rec, string field, string value)
@@ -1236,11 +1306,15 @@ namespace ResidenceSync
         public void DumpMasterSummary()
         {
             var ed = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
-            if (!File.Exists(MASTER_POINTS_PATH)) { ed?.WriteMessage("\nDUMPMASTER: Master file not found."); return; }
+            if (ed == null) return;
+            if (!PromptZone(ed, out CoordinateZone zone)) return;
+
+            string masterResidencesPath = GetMasterResidencesPath(zone);
+            if (!File.Exists(masterResidencesPath)) { ed?.WriteMessage($"\nDUMPMASTER: Master file not found ({masterResidencesPath})."); return; }
 
             using (var db = new Database(false, true))
             {
-                db.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                db.ReadDwgFile(masterResidencesPath, FileOpenMode.OpenForReadAndAllShare, false, null);
                 db.CloseInput(true);
 
                 using (var tr = db.TransactionManager.StartTransaction())
@@ -1260,19 +1334,23 @@ namespace ResidenceSync
                     }
                     tr.Commit();
 
-                    ed?.WriteMessage($"\nDUMPMASTER: INSERTs={nInserts}, POINTs={nPoints}, Extents=[{minx:0.###},{miny:0.###}]–[{maxx:0.###},{maxy:0.###}]");
+                    ed?.WriteMessage($"\nDUMPMASTER (Zone {FormatZoneNumber(zone)}): INSERTs={nInserts}, POINTs={nPoints}, Extents=[{minx:0.###},{miny:0.###}]–[{maxx:0.###},{maxy:0.###}]");
                 }
             }
         }
         [CommandMethod("ResidenceSync", "DUMPMASTERPLUS", CommandFlags.Modal)]
         public void DumpMasterPlus()
         {
-            var ed = Autodesk.AutoCAD.ApplicationServices.Core.Application.DocumentManager.MdiActiveDocument?.Editor;
-            if (!File.Exists(MASTER_POINTS_PATH)) { ed?.WriteMessage("\nDUMPMASTER+: Master file not found."); return; }
+            var ed = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
+            if (ed == null) return;
+            if (!PromptZone(ed, out CoordinateZone zone)) return;
+
+            string masterResidencesPath = GetMasterResidencesPath(zone);
+            if (!File.Exists(masterResidencesPath)) { ed?.WriteMessage($"\nDUMPMASTER+: Master file not found ({masterResidencesPath})."); return; }
 
             using (var db = new Database(false, true))
             {
-                db.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                db.ReadDwgFile(masterResidencesPath, FileOpenMode.OpenForReadAndAllShare, false, null);
                 db.CloseInput(true);
 
                 using (var tr = db.TransactionManager.StartTransaction())
@@ -1313,7 +1391,7 @@ namespace ResidenceSync
                         return;
                     }
 
-                    ed?.WriteMessage("\nDUMPMASTER+:");
+                    ed?.WriteMessage($"\nDUMPMASTER+ (Zone {FormatZoneNumber(zone)}):");
                     foreach (var kv in byName.OrderBy(k => k.Key))
                     {
                         var smp = kv.Value.samples.Select(p => $"({p.X:0.###},{p.Y:0.###})");
@@ -1899,6 +1977,7 @@ namespace ResidenceSync
 
         private struct VertexIndexRecord
         {
+            public CoordinateZone zone;
             public string sec, twp, rge, mer;
             public (double MinX, double MinY, double MaxX, double MaxY) aabb;
             public List<Point3d> verts;
@@ -1919,7 +1998,8 @@ namespace ResidenceSync
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     if (!TryParseJsonLine(line, out var r)) continue;
 
-                    if (EqNorm(r.sec, key.Section) &&
+                    if (r.zone == key.Zone &&
+                        EqNorm(r.sec, key.Section) &&
                         EqNorm(r.twp, key.Township) &&
                         EqNorm(r.rge, key.Range) &&
                         EqNorm(r.mer, key.Meridian))
@@ -1950,6 +2030,22 @@ namespace ResidenceSync
                     string twp = GetStr("TWP");
                     string rge = GetStr("RGE");
                     string mer = GetStr("MER");
+
+                    string normSec = NormStr(sec);
+                    string normTwp = NormStr(twp);
+                    string normRge = NormStr(rge);
+                    string normMer = NormStr(mer);
+
+                    double zoneValue = ExtractNumberAfter(s, "\"ZONE\"");
+                    CoordinateZone zone = CoordinateZone.Zone11;
+                    if (TryConvertToZone((int)Math.Round(zoneValue), out var parsedZone))
+                    {
+                        zone = parsedZone;
+                    }
+                    else if (MeridianMatchesZone(CoordinateZone.Zone12, normMer))
+                    {
+                        zone = CoordinateZone.Zone12;
+                    }
 
                     double minx = ExtractNumberAfter(s, "\"minx\"");
                     double miny = ExtractNumberAfter(s, "\"miny\"");
@@ -1989,10 +2085,11 @@ namespace ResidenceSync
 
                     r = new VertexIndexRecord
                     {
-                        sec = NormStr(sec),
-                        twp = NormStr(twp),
-                        rge = NormStr(rge),
-                        mer = NormStr(mer),
+                        zone = zone,
+                        sec = normSec,
+                        twp = normTwp,
+                        rge = normRge,
+                        mer = normMer,
                         aabb = (minx, miny, maxx, maxy),
                         verts = verts,
                         closed = closed
@@ -2061,6 +2158,14 @@ namespace ResidenceSync
         {
             if (string.IsNullOrWhiteSpace(s)) return string.Empty;
             string trimmed = s.Trim();
+
+            // Prefer numeric content even when prefixed (e.g., "SEC-23", "TWP-031", "MER-5")
+            string digitsOnly = new string(trimmed.Where(char.IsDigit).ToArray());
+            if (!string.IsNullOrEmpty(digitsOnly) && int.TryParse(digitsOnly, out int digitValue))
+            {
+                return digitValue.ToString(CultureInfo.InvariantCulture);
+            }
+
             if (int.TryParse(trimmed, out int n)) return n.ToString(CultureInfo.InvariantCulture);
             string noZeros = trimmed.TrimStart('0');
             return noZeros.Length > 0 ? noZeros : "0";
@@ -2075,11 +2180,27 @@ namespace ResidenceSync
             return string.Equals(a?.Trim(), b?.Trim(), StringComparison.OrdinalIgnoreCase);
         }
 
+        private static bool MeridianMatchesZone(CoordinateZone zone, string merValue)
+        {
+            if (string.IsNullOrWhiteSpace(merValue)) return false;
+            string normalized = NormStr(merValue);
+            if (!int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out int mer)) return false;
+
+            return zone switch
+            {
+                CoordinateZone.Zone11 => mer == 5 || mer == 6,
+                CoordinateZone.Zone12 => mer == 4,
+                _ => false
+            };
+        }
+
         // --------- User prompts & master points reader ---------
 
         private bool PromptSectionKey(Editor ed, out SectionKey key)
         {
             key = default;
+
+            if (!PromptZone(ed, out CoordinateZone zone)) return false;
 
             string sec = PromptString(ed, "Enter SEC: ");
             if (sec == null) return false;
@@ -2093,7 +2214,25 @@ namespace ResidenceSync
             string mer = PromptString(ed, "Enter MER: ");
             if (mer == null) return false;
 
-            key = new SectionKey(sec, twp, rge, mer);
+            key = new SectionKey(zone, sec, twp, rge, mer);
+            return true;
+        }
+
+        private bool PromptZone(Editor ed, out CoordinateZone zone)
+        {
+            zone = default;
+
+            var opts = new PromptKeywordOptions("\nEnter Zone [11/12]: ") { AllowNone = false };
+            opts.Keywords.Add("11");
+            opts.Keywords.Add("12");
+            opts.Keywords.Default = "11";
+
+            var res = ed.GetKeywords(opts);
+            if (res.Status != PromptStatus.OK) return false;
+
+            zone = (string.Equals(res.StringResult, "12", StringComparison.OrdinalIgnoreCase))
+                ? CoordinateZone.Zone12
+                : CoordinateZone.Zone11;
             return true;
         }
 
@@ -2140,15 +2279,15 @@ namespace ResidenceSync
             return bestIdx;
         }
 
-        private List<Point3d> ReadPointsFromMaster(out bool exists)
+        private List<Point3d> ReadPointsFromMaster(string masterPointsPath, out bool exists)
         {
-            exists = File.Exists(MASTER_POINTS_PATH);
+            exists = File.Exists(masterPointsPath);
             if (!exists) return new List<Point3d>();
 
             var points = new List<Point3d>();
             using (var masterDb = new Database(false, true))
             {
-                masterDb.ReadDwgFile(MASTER_POINTS_PATH, FileOpenMode.OpenForReadAndAllShare, false, null);
+                masterDb.ReadDwgFile(masterPointsPath, FileOpenMode.OpenForReadAndAllShare, false, null);
                 masterDb.CloseInput(true);
 
                 using (Transaction tr = masterDb.TransactionManager.StartTransaction())
@@ -2384,21 +2523,23 @@ namespace ResidenceSync
 
         private readonly struct SectionKey
         {
-            public SectionKey(string sec, string twp, string rge, string mer)
+            public SectionKey(CoordinateZone zone, string sec, string twp, string rge, string mer)
             {
+                Zone = zone;
                 Section = (sec ?? string.Empty).Trim();
                 Township = (twp ?? string.Empty).Trim();
                 Range = (rge ?? string.Empty).Trim();
                 Meridian = (mer ?? string.Empty).Trim();
             }
 
+            public CoordinateZone Zone { get; }
             public string Section { get; }
             public string Township { get; }
             public string Range { get; }
             public string Meridian { get; }
 
             public override string ToString()
-                => $"SEC {Section}, TWP {Township}, RGE {Range}, MER {Meridian}";
+                => $"Zone {FormatZoneNumber(Zone)}, SEC {Section}, TWP {Township}, RGE {Range}, MER {Meridian}";
         }
 
         private readonly struct Aabb2d

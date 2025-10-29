@@ -20,6 +20,8 @@ namespace ResidenceSync.UI
             this.tableLayoutMain = new System.Windows.Forms.TableLayoutPanel();
             this.groupSurfDev = new System.Windows.Forms.GroupBox();
             this.tableSurfDev = new System.Windows.Forms.TableLayoutPanel();
+            this.labelZone = new System.Windows.Forms.Label();
+            this.comboZone = new System.Windows.Forms.ComboBox();
             this.labelSection = new System.Windows.Forms.Label();
             this.textSection = new System.Windows.Forms.TextBox();
             this.labelTownship = new System.Windows.Forms.Label();
@@ -82,192 +84,206 @@ namespace ResidenceSync.UI
             this.tableSurfDev.ColumnCount = 2;
             this.tableSurfDev.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 110F));
             this.tableSurfDev.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.tableSurfDev.Controls.Add(this.labelSection, 0, 0);
-            this.tableSurfDev.Controls.Add(this.textSection, 1, 0);
-            this.tableSurfDev.Controls.Add(this.labelTownship, 0, 1);
-            this.tableSurfDev.Controls.Add(this.textTownship, 1, 1);
-            this.tableSurfDev.Controls.Add(this.labelRange, 0, 2);
-            this.tableSurfDev.Controls.Add(this.textRange, 1, 2);
-            this.tableSurfDev.Controls.Add(this.labelMeridian, 0, 3);
-            this.tableSurfDev.Controls.Add(this.textMeridian, 1, 3);
-            this.tableSurfDev.Controls.Add(this.labelGridSize, 0, 4);
-            this.tableSurfDev.Controls.Add(this.comboGridSize, 1, 4);
-            this.tableSurfDev.Controls.Add(this.labelScale, 0, 5);
-            this.tableSurfDev.Controls.Add(this.comboScale, 1, 5);
-            this.tableSurfDev.Controls.Add(this.label1, 0, 6);
-            this.tableSurfDev.Controls.Add(this.comboSurveyed, 1, 6);
-            this.tableSurfDev.Controls.Add(this.labelInsertRes, 0, 7);
-            this.tableSurfDev.Controls.Add(this.comboInsertResidences, 1, 7);
+            this.tableSurfDev.Controls.Add(this.labelZone, 0, 0);
+            this.tableSurfDev.Controls.Add(this.comboZone, 1, 0);
+            this.tableSurfDev.Controls.Add(this.labelSection, 0, 1);
+            this.tableSurfDev.Controls.Add(this.textSection, 1, 1);
+            this.tableSurfDev.Controls.Add(this.labelTownship, 0, 2);
+            this.tableSurfDev.Controls.Add(this.textTownship, 1, 2);
+            this.tableSurfDev.Controls.Add(this.labelRange, 0, 3);
+            this.tableSurfDev.Controls.Add(this.textRange, 1, 3);
+            this.tableSurfDev.Controls.Add(this.labelMeridian, 0, 4);
+            this.tableSurfDev.Controls.Add(this.textMeridian, 1, 4);
+            this.tableSurfDev.Controls.Add(this.labelGridSize, 0, 5);
+            this.tableSurfDev.Controls.Add(this.comboGridSize, 1, 5);
+            this.tableSurfDev.Controls.Add(this.labelScale, 0, 6);
+            this.tableSurfDev.Controls.Add(this.comboScale, 1, 6);
+            this.tableSurfDev.Controls.Add(this.label1, 0, 7);
+            this.tableSurfDev.Controls.Add(this.comboSurveyed, 1, 7);
+            this.tableSurfDev.Controls.Add(this.labelInsertRes, 0, 8);
+            this.tableSurfDev.Controls.Add(this.comboInsertResidences, 1, 8);
             this.tableSurfDev.Dock = System.Windows.Forms.DockStyle.Fill;
             this.tableSurfDev.GrowStyle = System.Windows.Forms.TableLayoutPanelGrowStyle.FixedSize;
             this.tableSurfDev.Location = new System.Drawing.Point(8, 30);
             this.tableSurfDev.Name = "tableSurfDev";
-            this.tableSurfDev.RowCount = 8;
-            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
-            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
-            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
-            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
-            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
-            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
-            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
-            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 12.5F));
+            this.tableSurfDev.RowCount = 9;
+            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
+            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
+            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
+            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
+            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
+            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
+            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
+            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
+            this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
             this.tableSurfDev.Size = new System.Drawing.Size(304, 281);
             this.tableSurfDev.TabIndex = 0;
             this.tableSurfDev.Paint += new System.Windows.Forms.PaintEventHandler(this.tableSurfDev_Paint);
             // 
+            // labelZone
+            //
+            this.labelZone.Anchor = System.Windows.Forms.AnchorStyles.Left;
+            this.labelZone.AutoSize = true;
+            this.labelZone.Location = new System.Drawing.Point(3, 5);
+            this.labelZone.Name = "labelZone";
+            this.labelZone.Size = new System.Drawing.Size(54, 25);
+            this.labelZone.TabIndex = 0;
+            this.labelZone.Text = "Zone";
+            //
+            // comboZone
+            //
+            this.comboZone.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.comboZone.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.comboZone.FormattingEnabled = true;
+            this.comboZone.Location = new System.Drawing.Point(113, 3);
+            this.comboZone.Name = "comboZone";
+            this.comboZone.Size = new System.Drawing.Size(188, 33);
+            this.comboZone.TabIndex = 1;
+            //
             // labelSection
-            // 
+            //
             this.labelSection.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelSection.AutoSize = true;
-            this.labelSection.Location = new System.Drawing.Point(3, 5);
+            this.labelSection.Location = new System.Drawing.Point(3, 36);
             this.labelSection.Name = "labelSection";
             this.labelSection.Size = new System.Drawing.Size(70, 25);
-            this.labelSection.TabIndex = 0;
+            this.labelSection.TabIndex = 2;
             this.labelSection.Text = "Section";
-            // 
+            //
             // textSection
-            // 
+            //
             this.textSection.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textSection.Location = new System.Drawing.Point(113, 3);
+            this.textSection.Location = new System.Drawing.Point(113, 34);
             this.textSection.Name = "textSection";
             this.textSection.Size = new System.Drawing.Size(188, 31);
-            this.textSection.TabIndex = 1;
-            // 
+            this.textSection.TabIndex = 3;
+            //
             // labelTownship
-            // 
+            //
             this.labelTownship.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelTownship.AutoSize = true;
-            this.labelTownship.Location = new System.Drawing.Point(3, 40);
+            this.labelTownship.Location = new System.Drawing.Point(3, 67);
             this.labelTownship.Name = "labelTownship";
             this.labelTownship.Size = new System.Drawing.Size(86, 25);
-            this.labelTownship.TabIndex = 2;
+            this.labelTownship.TabIndex = 4;
             this.labelTownship.Text = "Township";
-            // 
+            //
             // textTownship
-            // 
+            //
             this.textTownship.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textTownship.Location = new System.Drawing.Point(113, 38);
+            this.textTownship.Location = new System.Drawing.Point(113, 65);
             this.textTownship.Name = "textTownship";
             this.textTownship.Size = new System.Drawing.Size(188, 31);
-            this.textTownship.TabIndex = 3;
-            // 
+            this.textTownship.TabIndex = 5;
+            //
             // labelRange
-            // 
+            //
             this.labelRange.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelRange.AutoSize = true;
-            this.labelRange.Location = new System.Drawing.Point(3, 75);
+            this.labelRange.Location = new System.Drawing.Point(3, 98);
             this.labelRange.Name = "labelRange";
             this.labelRange.Size = new System.Drawing.Size(62, 25);
-            this.labelRange.TabIndex = 4;
+            this.labelRange.TabIndex = 6;
             this.labelRange.Text = "Range";
-            // 
+            //
             // textRange
-            // 
+            //
             this.textRange.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textRange.Location = new System.Drawing.Point(113, 73);
+            this.textRange.Location = new System.Drawing.Point(113, 96);
             this.textRange.Name = "textRange";
             this.textRange.Size = new System.Drawing.Size(188, 31);
-            this.textRange.TabIndex = 5;
-            // 
+            this.textRange.TabIndex = 7;
+            //
             // labelMeridian
-            // 
+            //
             this.labelMeridian.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelMeridian.AutoSize = true;
-            this.labelMeridian.Location = new System.Drawing.Point(3, 110);
+            this.labelMeridian.Location = new System.Drawing.Point(3, 129);
             this.labelMeridian.Name = "labelMeridian";
             this.labelMeridian.Size = new System.Drawing.Size(81, 25);
-            this.labelMeridian.TabIndex = 6;
+            this.labelMeridian.TabIndex = 8;
             this.labelMeridian.Text = "Meridian";
-            // 
+            //
             // textMeridian
-            // 
+            //
             this.textMeridian.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textMeridian.Location = new System.Drawing.Point(113, 108);
+            this.textMeridian.Location = new System.Drawing.Point(113, 127);
             this.textMeridian.Name = "textMeridian";
             this.textMeridian.Size = new System.Drawing.Size(188, 31);
-            this.textMeridian.TabIndex = 7;
-            // 
+            this.textMeridian.TabIndex = 9;
+            //
             // labelGridSize
-            // 
+            //
             this.labelGridSize.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelGridSize.AutoSize = true;
-            this.labelGridSize.Location = new System.Drawing.Point(3, 145);
+            this.labelGridSize.Location = new System.Drawing.Point(3, 160);
             this.labelGridSize.Name = "labelGridSize";
             this.labelGridSize.Size = new System.Drawing.Size(79, 25);
-            this.labelGridSize.TabIndex = 8;
+            this.labelGridSize.TabIndex = 10;
             this.labelGridSize.Text = "Grid size";
-            // 
+            //
             // comboGridSize
-            // 
+            //
             this.comboGridSize.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.comboGridSize.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.comboGridSize.FormattingEnabled = true;
-            this.comboGridSize.Location = new System.Drawing.Point(113, 143);
+            this.comboGridSize.Location = new System.Drawing.Point(113, 158);
             this.comboGridSize.Name = "comboGridSize";
             this.comboGridSize.Size = new System.Drawing.Size(188, 33);
-            this.comboGridSize.TabIndex = 9;
-            // 
+            this.comboGridSize.TabIndex = 11;
+            //
             // labelScale
-            // 
+            //
             this.labelScale.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelScale.AutoSize = true;
-            this.labelScale.Location = new System.Drawing.Point(3, 180);
+            this.labelScale.Location = new System.Drawing.Point(3, 191);
             this.labelScale.Name = "labelScale";
-            this.labelScale.Size = new System.Drawing.Size(52, 25);
-            this.labelScale.TabIndex = 10;
+            this.labelScale.Size = new System.Drawing.Size(55, 25);
+            this.labelScale.TabIndex = 12;
             this.labelScale.Text = "Scale";
-            // 
+            //
             // comboScale
-            // 
+            //
             this.comboScale.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.comboScale.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.comboScale.FormattingEnabled = true;
-            this.comboScale.Location = new System.Drawing.Point(113, 178);
+            this.comboScale.Location = new System.Drawing.Point(113, 189);
             this.comboScale.Name = "comboScale";
             this.comboScale.Size = new System.Drawing.Size(188, 33);
-            this.comboScale.TabIndex = 11;
-            // 
+            this.comboScale.TabIndex = 13;
+            //
             // label1
-            // 
+            //
             this.label1.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(3, 215);
+            this.label1.Location = new System.Drawing.Point(3, 222);
             this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(85, 25);
-            this.label1.TabIndex = 16;
+            this.label1.Size = new System.Drawing.Size(82, 25);
+            this.label1.TabIndex = 14;
             this.label1.Text = "Surveyed";
-            // 
+            this.label1.Click += new System.EventHandler(this.labelSurveyed_Click);
+            //
             // comboSurveyed
-            // 
+            //
             this.comboSurveyed.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.comboSurveyed.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.comboSurveyed.FormattingEnabled = true;
-            this.comboSurveyed.Location = new System.Drawing.Point(113, 213);
+            this.comboSurveyed.Location = new System.Drawing.Point(113, 220);
             this.comboSurveyed.Name = "comboSurveyed";
             this.comboSurveyed.Size = new System.Drawing.Size(188, 33);
-            this.comboSurveyed.TabIndex = 13;
-            // 
+            this.comboSurveyed.TabIndex = 15;
+            //
             // labelInsertRes
-            // 
+            //
             this.labelInsertRes.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelInsertRes.AutoSize = true;
-            this.labelInsertRes.Location = new System.Drawing.Point(3, 250);
+            this.labelInsertRes.Location = new System.Drawing.Point(3, 253);
             this.labelInsertRes.Name = "labelInsertRes";
-            this.labelInsertRes.Size = new System.Drawing.Size(74, 25);
-            this.labelInsertRes.TabIndex = 12;
-            this.labelInsertRes.Text = "Inc.Res?";
-            this.labelInsertRes.Click += new System.EventHandler(this.labelSurveyed_Click);
-            // 
+            this.labelInsertRes.Size = new System.Drawing.Size(147, 25);
+            this.labelInsertRes.TabIndex = 16;
+            this.labelInsertRes.Text = "Insert Residences";
+            //
             // comboInsertResidences
-            // 
+            //
             this.comboInsertResidences.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.comboInsertResidences.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
-            this.comboInsertResidences.FormattingEnabled = true;
-            this.comboInsertResidences.Location = new System.Drawing.Point(113, 248);
+            this.comboInsertResidences.Location = new System.Drawing.Point(113, 251);
             this.comboInsertResidences.Name = "comboInsertResidences";
             this.comboInsertResidences.Size = new System.Drawing.Size(188, 33);
-            this.comboInsertResidences.TabIndex = 15;
-            // 
+            this.comboInsertResidences.TabIndex = 17;
             // flowButtons
             // 
             this.flowButtons.AutoSize = true;
@@ -358,6 +374,8 @@ namespace ResidenceSync.UI
         private System.Windows.Forms.TableLayoutPanel tableLayoutMain;
         private System.Windows.Forms.GroupBox groupSurfDev;
         private System.Windows.Forms.TableLayoutPanel tableSurfDev;
+        private System.Windows.Forms.Label labelZone;
+        private System.Windows.Forms.ComboBox comboZone;
         private System.Windows.Forms.Label labelSection;
         private System.Windows.Forms.TextBox textSection;
         private System.Windows.Forms.Label labelTownship;
