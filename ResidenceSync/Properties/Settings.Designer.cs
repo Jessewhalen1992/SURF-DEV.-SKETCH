@@ -24,6 +24,18 @@ namespace ResidenceSync.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("11")]
+        public string SectionKeyZone {
+            get {
+                return ((string)(this["SectionKeyZone"]));
+            }
+            set {
+                this["SectionKeyZone"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
         [global::System.Configuration.DefaultSettingValueAttribute("")]
         public string SectionKeySec {
             get {

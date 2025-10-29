@@ -26,9 +26,10 @@ namespace ResidenceSync.UI
             return macro;
         }
 
-        public static string BuildBuildSec(string sec, string twp, string rge, string mer)
+        public static string BuildBuildSec(string zone, string sec, string twp, string rge, string mer)
         {
             var macro = "BUILDSEC\n";
+            macro = AppendIfPresent(macro, zone);
             macro = AppendIfPresent(macro, sec);
             macro = AppendIfPresent(macro, twp);
             macro = AppendIfPresent(macro, rge);
@@ -36,12 +37,15 @@ namespace ResidenceSync.UI
             return macro.EndsWith("\n", StringComparison.Ordinal) ? macro : macro + "\n";
         }
 
-        public static string BuildPushResS()
+        public static string BuildPushResS(string zone)
         {
-            return "PUSHRESS\n";
+            var macro = "PUSHRESS\n";
+            macro = AppendIfPresent(macro, zone);
+            return macro.EndsWith("\n", StringComparison.Ordinal) ? macro : macro + "\n";
         }
 
         public static string BuildSurfDev(
+            string zone,
             string sec,
             string twp,
             string rge,
@@ -52,6 +56,7 @@ namespace ResidenceSync.UI
             bool? insertResidences)
         {
             var macro = "SURFDEV\n";
+            macro = AppendIfPresent(macro, zone);
             macro = AppendIfPresent(macro, sec);
             macro = AppendIfPresent(macro, twp);
             macro = AppendIfPresent(macro, rge);
