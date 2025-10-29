@@ -2186,12 +2186,15 @@ namespace ResidenceSync
             string normalized = NormStr(merValue);
             if (!int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out int mer)) return false;
 
-            return zone switch
+            switch (zone)
             {
-                CoordinateZone.Zone11 => mer == 5 || mer == 6,
-                CoordinateZone.Zone12 => mer == 4,
-                _ => false
-            };
+                case CoordinateZone.Zone11:
+                    return mer == 5 || mer == 6;
+                case CoordinateZone.Zone12:
+                    return mer == 4;
+                default:
+                    return false;
+            }
         }
 
         // --------- User prompts & master points reader ---------
