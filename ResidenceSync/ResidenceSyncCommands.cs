@@ -722,10 +722,6 @@ namespace ResidenceSync
                 EnsureLayer(doc.Database, "S-7", tr);
                 if (insertResidences) EnsureLayer(doc.Database, RESIDENCE_LAYER, tr);
 
-                // Force colors
-                SetLayerColor(doc.Database, outlineLayer, 253, tr);
-                SetLayerColor(doc.Database, "L-QSEC", 253, tr);
-
                 var bt = (BlockTable)tr.GetObject(doc.Database.BlockTableId, DbOpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForWrite);
 
