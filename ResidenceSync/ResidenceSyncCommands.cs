@@ -366,14 +366,17 @@ namespace ResidenceSync
                 }
                 pl.Closed = rec.closed;
                 pl.Layer = "L-USEC";
+                // Ensure the polyline uses ByLayer color so it doesn't inherit a previous command’s color
+                pl.ColorIndex = 256;
                 ms.AppendEntity(pl); tr.AddNewlyCreatedDBObject(pl, true);
 
                 if (TryGetQuarterAnchorsByEdgeMedianVertexChain(rec.verts,
                         out Point3d topV, out Point3d botV,
                         out Point3d leftV, out Point3d rightV))
                 {
-                    var qv = new Line(topV, botV) { Layer = "L-QSEC" };
-                    var qh = new Line(leftV, rightV) { Layer = "L-QSEC" };
+                    // Create quarter lines and ensure they use ByLayer color (ColorIndex 256)
+                    var qv = new Line(topV, botV) { Layer = "L-QSEC", ColorIndex = 256 };
+                    var qh = new Line(leftV, rightV) { Layer = "L-QSEC", ColorIndex = 256 };
                     ms.AppendEntity(qv); tr.AddNewlyCreatedDBObject(qv, true);
                     ms.AppendEntity(qh); tr.AddNewlyCreatedDBObject(qh, true);
                 }
