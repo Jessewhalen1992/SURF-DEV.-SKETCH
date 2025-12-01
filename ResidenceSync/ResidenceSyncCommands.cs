@@ -1217,6 +1217,7 @@ namespace ResidenceSync
                                 var d = it.Target - brW.Position;
                                 if (!d.IsZeroLength()) brW.TransformBy(Matrix3d.Displacement(d));
                                 brW.LayerId = resLayerId;
+                                brW.ScaleFactors = new Scale3d(5.0); // enforce uniform scale in master
 
                                 // Write attributes (JOB from DWG name; DESC/NOTES from source item)
                                 SetBlockAttributes(brW, jobFromThisDwg, it.Desc, it.Notes);
@@ -1242,7 +1243,11 @@ namespace ResidenceSync
                                 continue;
                             }
 
-                            var br = new BlockReference(it.Target, btrId) { LayerId = resLayerId };
+                            var br = new BlockReference(it.Target, btrId)
+                            {
+                                LayerId = resLayerId,
+                                ScaleFactors = new Scale3d(5.0) // enforce uniform scale in master
+                            };
                             ms.AppendEntity(br); tr.AddNewlyCreatedDBObject(br, true);
 
                             // Create attribute references and set values
