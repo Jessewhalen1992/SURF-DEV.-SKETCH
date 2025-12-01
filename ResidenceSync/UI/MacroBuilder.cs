@@ -29,6 +29,8 @@ namespace ResidenceSync.UI
         public static string BuildBuildSec(string zone, string sec, string twp, string rge, string mer)
         {
             var macro = "BUILDSEC\n";
+            // Auto-confirm the UTM prompt introduced in BUILDSEC.
+            macro = AppendIfPresent(macro, "Yes");
             macro = AppendIfPresent(macro, zone);
             macro = AppendIfPresent(macro, sec);
             macro = AppendIfPresent(macro, twp);
