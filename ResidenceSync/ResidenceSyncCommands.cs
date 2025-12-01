@@ -26,6 +26,8 @@ namespace ResidenceSync
     public class ResidenceSyncCommands
     {
         private const string MASTER_FILES_DIRECTORY = @"M:\Drafting\_SHARED FILES\_CG_SHARED";
+        private const string PRIMARY_INDEX_DIRECTORY = @"C:\AUTOCAD-SETUP CG\CG_LISP\COMPASS\RES MANAGER";
+        private const string FALLBACK_INDEX_DIRECTORY = @"C:\AUTOCAD-SETUP\Lisp_2000\COMPASS\RES MANAGER";
 
         private enum CoordinateZone
         {
@@ -42,11 +44,14 @@ namespace ResidenceSync
         private static string GetMasterSectionsPath(CoordinateZone zone)
             => Path.Combine(MASTER_FILES_DIRECTORY, $"Master_Sections_Z{FormatZoneNumber(zone)}.dwg");
 
+        private static string GetSectionsIndexDirectory()
+            => Directory.Exists(PRIMARY_INDEX_DIRECTORY) ? PRIMARY_INDEX_DIRECTORY : FALLBACK_INDEX_DIRECTORY;
+
         private static string GetMasterSectionsIndexJsonPath(CoordinateZone zone)
-            => Path.Combine(MASTER_FILES_DIRECTORY, $"Master_Sections.index_Z{FormatZoneNumber(zone)}.jsonl");
+            => Path.Combine(GetSectionsIndexDirectory(), $"Master_Sections.index_Z{FormatZoneNumber(zone)}.jsonl");
 
         private static string GetMasterSectionsIndexCsvPath(CoordinateZone zone)
-            => Path.Combine(MASTER_FILES_DIRECTORY, $"Master_Sections.index_Z{FormatZoneNumber(zone)}.csv");
+            => Path.Combine(GetSectionsIndexDirectory(), $"Master_Sections.index_Z{FormatZoneNumber(zone)}.csv");
 
         private static bool TryConvertToZone(int zoneNumber, out CoordinateZone zone)
         {
