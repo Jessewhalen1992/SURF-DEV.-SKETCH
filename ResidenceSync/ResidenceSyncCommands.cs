@@ -336,6 +336,11 @@ namespace ResidenceSync
             if (doc == null) return;
             var ed = doc.Editor;
 
+            if (!ConfirmUtm(ed))
+            {
+                return;
+            }
+
             if (!PromptSectionKey(ed, out SectionKey key)) return;
 
             string idxPath = GetMasterSectionsIndexJsonPath(key.Zone);
@@ -357,7 +362,6 @@ namespace ResidenceSync
             {
                 EnsureLayer(doc.Database, "L-USEC", tr);
                 EnsureLayer(doc.Database, "L-QSEC", tr);
-                EnsureLayer(doc.Database, RESIDENCE_LAYER, tr);
 
                 var bt = (BlockTable)tr.GetObject(doc.Database.BlockTableId, DbOpenMode.ForRead);
                 var ms = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], DbOpenMode.ForWrite);
@@ -384,36 +388,88 @@ namespace ResidenceSync
                     var qh = new Line(leftV, rightV) { Layer = "L-QSEC", ColorIndex = 256 };
                     ms.AppendEntity(qv); tr.AddNewlyCreatedDBObject(qv, true);
                     ms.AppendEntity(qh); tr.AddNewlyCreatedDBObject(qh, true);
-                }
 
-                string masterResidencesPath = GetMasterResidencesPath(key.Zone);
-
-                // Residences inside this polygon from master file
-                var residences = ReadPointsFromMaster(masterResidencesPath, out bool exists);
-                if (exists && residences.Count > 0)
-                {
-                    int added = 0;
-                    foreach (var pt in residences)
-                    {
-                        if (PointInPolygon2D(rec.verts, pt.X, pt.Y))
-                        {
-                            var dp = new DBPoint(pt) { Layer = RESIDENCE_LAYER };
-                            ms.AppendEntity(dp); tr.AddNewlyCreatedDBObject(dp, true);
-                            added++;
-                        }
-                    }
-                    EnsurePointStyleVisible();
-                    ed.WriteMessage($"\nBUILDSEC: Inserted {added} residence point(s).");
-                }
-                else
-                {
-                    ed.WriteMessage($"\nBUILDSEC: No residences found in {masterResidencesPath}.");
+                    // Insert section label block at the intersection of quarter lines
+                    var center = new Point3d(
+                        0.5 * (topV.X + botV.X),
+                        0.5 * (leftV.Y + rightV.Y),
+                        0);
+                    InsertSectionLabelBlock(ms, bt, tr, ed, center, key);
                 }
 
                 tr.Commit();
             }
 
             ed.WriteMessage("\nBUILDSEC: Section drawn from vertex index at master coordinates.");
+        }
+
+        private static bool ConfirmUtm(Editor ed)
+        {
+            var opts = new PromptKeywordOptions("\nARE YOU IN UTM? [Yes/No]: ", "Yes No")
+            {
+                AllowArbitraryInput = false,
+                AllowNone = false,
+                DefaultKeyword = "Yes"
+            };
+
+            var res = ed.GetKeywords(opts);
+            if (res.Status != PromptStatus.OK)
+            {
+                return false;
+            }
+
+            if (string.Equals(res.StringResult, "No", StringComparison.OrdinalIgnoreCase))
+            {
+                ed.WriteMessage("\nBUILDSEC: Command cancelled (not in UTM).");
+                return false;
+            }
+
+            return true;
+        }
+
+        private static void InsertSectionLabelBlock(
+            BlockTableRecord ms,
+            BlockTable bt,
+            Transaction tr,
+            Editor ed,
+            Point3d position,
+            SectionKey key)
+        {
+            const string blockName = "L-SECLBL";
+
+            if (!bt.Has(blockName))
+            {
+                ed?.WriteMessage($"\nBUILDSEC: Block '{blockName}' not found; skipped section label.");
+                return;
+            }
+
+            var btrId = bt[blockName];
+            var br = new BlockReference(position, btrId)
+            {
+                ScaleFactors = new Scale3d(1.0)
+            };
+            ms.AppendEntity(br);
+            tr.AddNewlyCreatedDBObject(br, true);
+
+            var btr = (BlockTableRecord)tr.GetObject(btrId, DbOpenMode.ForRead);
+            if (btr.HasAttributeDefinitions)
+            {
+                foreach (ObjectId id in btr)
+                {
+                    if (!(tr.GetObject(id, DbOpenMode.ForRead) is AttributeDefinition ad)) continue;
+                    if (ad.Constant) continue;
+
+                    var ar = new AttributeReference();
+                    ar.SetAttributeFromBlock(ad, br.BlockTransform);
+                    br.AttributeCollection.AppendAttribute(ar);
+                    tr.AddNewlyCreatedDBObject(ar, true);
+                }
+            }
+
+            SetBlockAttribute(br, "SEC", key.Section);
+            SetBlockAttribute(br, "TWP", key.Township);
+            SetBlockAttribute(br, "RGE", key.Range);
+            SetBlockAttribute(br, "MER", key.Meridian);
         }
 
         // =========================================================================
