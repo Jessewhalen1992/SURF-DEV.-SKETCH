@@ -408,9 +408,10 @@ namespace ResidenceSync
             var opts = new PromptKeywordOptions("\nARE YOU IN UTM? [Yes/No]: ", "Yes No")
             {
                 AllowArbitraryInput = false,
-                AllowNone = false,
-                DefaultKeyword = "Yes"
+                AllowNone = false
             };
+
+            opts.Keywords.Default = "Yes";
 
             var res = ed.GetKeywords(opts);
             if (res.Status != PromptStatus.OK)
