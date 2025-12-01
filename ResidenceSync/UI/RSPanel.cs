@@ -43,15 +43,33 @@ namespace ResidenceSync.UI
         }
 
 
+        // RSPanel.cs – prompt user before sending macro
         private void btnBuildSection_Click(object sender, EventArgs e)
         {
             SaveUserSettings();
+
+            // Confirm whether the user is in UTM
+            var result = MessageBox.Show(
+                "Are you in UTM?",
+                "Confirm UTM",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            // If the user clicks “No”, cancel the operation
+            if (result != DialogResult.Yes)
+            {
+                SetStatus("Section build cancelled – not in UTM.");
+                return;
+            }
+
+            // User confirmed they’re in UTM – proceed with macro
             var macro = MacroBuilder.BuildBuildSec(
                 GetZoneSelectionValue(),
                 GetTextValue(textSection),
                 GetTextValue(textTownship),
                 GetTextValue(textRange),
                 GetTextValue(textMeridian));
+
             SendMacro(macro);
         }
 
