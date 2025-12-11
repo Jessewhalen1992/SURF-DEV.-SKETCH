@@ -436,18 +436,13 @@ namespace ResidenceSync.UI
             string BuildInsertMacro(string blockName) =>
                 $"^C^C(progn (command \"-LAYER\" \"S\" \"0\" \"\") (InsertBlock1 \"{blockName}\"))";
 
-            var labelQuickInserts = new Label
-            {
-                Text = "Quick inserts:",
-                AutoSize = true,
-                Anchor = AnchorStyles.Left | AnchorStyles.Top
-            };
-
             var btnFreeholdRadius = new Button
             {
                 Name = "btnFreeholdRadius",
                 Text = "Freehold Radius" + arrow,
-                AutoSize = true
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Fill
             };
 
             var freeholdMenu = BuildMacroMenu(new[]
@@ -460,7 +455,9 @@ namespace ResidenceSync.UI
             {
                 Name = "btnExtentFabric",
                 Text = "Extent Fabric" + arrow,
-                AutoSize = true
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Fill
             };
 
             var extentMenu = BuildMacroMenu(new[]
@@ -474,7 +471,9 @@ namespace ResidenceSync.UI
             {
                 Name = "btnTownshipFabric",
                 Text = "Township Fabric" + arrow,
-                AutoSize = true
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Fill
             };
 
             var townshipMenu = BuildMacroMenu(new[]
@@ -490,7 +489,9 @@ namespace ResidenceSync.UI
             {
                 Name = "btnRadiusCircles",
                 Text = "Radius Circles" + arrow,
-                AutoSize = true
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Fill
             };
 
             var radiusMenu = BuildMacroMenu(new[]
@@ -502,11 +503,10 @@ namespace ResidenceSync.UI
             });
             AttachMenu(btnRadiusCircles, radiusMenu);
 
-            flowButtons.Controls.Add(labelQuickInserts);
-            flowButtons.Controls.Add(btnFreeholdRadius);
-            flowButtons.Controls.Add(btnExtentFabric);
-            flowButtons.Controls.Add(btnTownshipFabric);
-            flowButtons.Controls.Add(btnRadiusCircles);
+            tableQuickButtons.Controls.Add(btnFreeholdRadius, 0, 0);
+            tableQuickButtons.Controls.Add(btnExtentFabric, 1, 0);
+            tableQuickButtons.Controls.Add(btnTownshipFabric, 2, 0);
+            tableQuickButtons.Controls.Add(btnRadiusCircles, 3, 0);
         }
     }
 }

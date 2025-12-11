@@ -38,23 +38,27 @@ namespace ResidenceSync.UI
             this.comboSurveyed = new System.Windows.Forms.ComboBox();
             this.labelInsertRes = new System.Windows.Forms.Label();
             this.comboInsertResidences = new System.Windows.Forms.ComboBox();
-            this.flowButtons = new System.Windows.Forms.FlowLayoutPanel();
+            this.tableButtons = new System.Windows.Forms.TableLayoutPanel();
+            this.tablePrimaryButtons = new System.Windows.Forms.TableLayoutPanel();
             this.btnBuildSection = new System.Windows.Forms.Button();
             this.btnPushResidences = new System.Windows.Forms.Button();
             this.btnBuildSurface = new System.Windows.Forms.Button();
+            this.tableQuickButtons = new System.Windows.Forms.TableLayoutPanel();
             this.lblStatus = new System.Windows.Forms.Label();
             this.tableLayoutMain.SuspendLayout();
             this.groupSurfDev.SuspendLayout();
             this.tableSurfDev.SuspendLayout();
-            this.flowButtons.SuspendLayout();
+            this.tableButtons.SuspendLayout();
+            this.tablePrimaryButtons.SuspendLayout();
+            this.tableQuickButtons.SuspendLayout();
             this.SuspendLayout();
-            // 
+            //
             // tableLayoutMain
-            // 
+            //
             this.tableLayoutMain.ColumnCount = 1;
             this.tableLayoutMain.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tableLayoutMain.Controls.Add(this.groupSurfDev, 0, 0);
-            this.tableLayoutMain.Controls.Add(this.flowButtons, 0, 1);
+            this.tableLayoutMain.Controls.Add(this.tableButtons, 0, 1);
             this.tableLayoutMain.Controls.Add(this.lblStatus, 0, 2);
             this.tableLayoutMain.Dock = System.Windows.Forms.DockStyle.Fill;
             this.tableLayoutMain.Location = new System.Drawing.Point(0, 0);
@@ -284,25 +288,49 @@ namespace ResidenceSync.UI
             this.comboInsertResidences.Name = "comboInsertResidences";
             this.comboInsertResidences.Size = new System.Drawing.Size(188, 33);
             this.comboInsertResidences.TabIndex = 17;
-            // flowButtons
-            // 
-            this.flowButtons.AutoSize = true;
-            this.flowButtons.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-            this.flowButtons.Controls.Add(this.btnBuildSection);
-            this.flowButtons.Controls.Add(this.btnPushResidences);
-            this.flowButtons.Controls.Add(this.btnBuildSurface);
-            this.flowButtons.Dock = System.Windows.Forms.DockStyle.Top;
-            this.flowButtons.Location = new System.Drawing.Point(3, 328);
-            this.flowButtons.Margin = new System.Windows.Forms.Padding(3, 3, 3, 0);
-            this.flowButtons.Name = "flowButtons";
-            this.flowButtons.Size = new System.Drawing.Size(314, 41);
-            this.flowButtons.TabIndex = 1;
-            this.flowButtons.WrapContents = false;
-            // 
+            // tableButtons
+            //
+            this.tableButtons.AutoSize = true;
+            this.tableButtons.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.tableButtons.ColumnCount = 1;
+            this.tableButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.tableButtons.Controls.Add(this.tablePrimaryButtons, 0, 0);
+            this.tableButtons.Controls.Add(this.tableQuickButtons, 0, 1);
+            this.tableButtons.Dock = System.Windows.Forms.DockStyle.Top;
+            this.tableButtons.Location = new System.Drawing.Point(3, 328);
+            this.tableButtons.Margin = new System.Windows.Forms.Padding(3, 3, 3, 0);
+            this.tableButtons.Name = "tableButtons";
+            this.tableButtons.RowCount = 2;
+            this.tableButtons.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            this.tableButtons.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            this.tableButtons.Size = new System.Drawing.Size(314, 88);
+            this.tableButtons.TabIndex = 1;
+            //
+            // tablePrimaryButtons
+            //
+            this.tablePrimaryButtons.AutoSize = true;
+            this.tablePrimaryButtons.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.tablePrimaryButtons.ColumnCount = 3;
+            this.tablePrimaryButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 33.33333F));
+            this.tablePrimaryButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 33.33333F));
+            this.tablePrimaryButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 33.33333F));
+            this.tablePrimaryButtons.Controls.Add(this.btnBuildSection, 0, 0);
+            this.tablePrimaryButtons.Controls.Add(this.btnPushResidences, 1, 0);
+            this.tablePrimaryButtons.Controls.Add(this.btnBuildSurface, 2, 0);
+            this.tablePrimaryButtons.Dock = System.Windows.Forms.DockStyle.Top;
+            this.tablePrimaryButtons.Location = new System.Drawing.Point(0, 0);
+            this.tablePrimaryButtons.Margin = new System.Windows.Forms.Padding(0, 0, 0, 6);
+            this.tablePrimaryButtons.Name = "tablePrimaryButtons";
+            this.tablePrimaryButtons.RowCount = 1;
+            this.tablePrimaryButtons.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            this.tablePrimaryButtons.Size = new System.Drawing.Size(314, 41);
+            this.tablePrimaryButtons.TabIndex = 0;
+            //
             // btnBuildSection
-            // 
+            //
             this.btnBuildSection.AutoSize = true;
             this.btnBuildSection.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.btnBuildSection.Dock = System.Windows.Forms.DockStyle.Fill;
             this.btnBuildSection.Location = new System.Drawing.Point(3, 3);
             this.btnBuildSection.Name = "btnBuildSection";
             this.btnBuildSection.Size = new System.Drawing.Size(124, 35);
@@ -310,33 +338,53 @@ namespace ResidenceSync.UI
             this.btnBuildSection.Text = "Build Section";
             this.btnBuildSection.UseVisualStyleBackColor = true;
             this.btnBuildSection.Click += new System.EventHandler(this.btnBuildSection_Click);
-            // 
+            //
             // btnPushResidences
-            // 
+            //
             this.btnPushResidences.AutoSize = true;
             this.btnPushResidences.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-            this.btnPushResidences.Location = new System.Drawing.Point(133, 3);
+            this.btnPushResidences.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.btnPushResidences.Location = new System.Drawing.Point(107, 3);
             this.btnPushResidences.Name = "btnPushResidences";
-            this.btnPushResidences.Size = new System.Drawing.Size(151, 35);
+            this.btnPushResidences.Size = new System.Drawing.Size(98, 35);
             this.btnPushResidences.TabIndex = 1;
             this.btnPushResidences.Text = "Push Residences";
             this.btnPushResidences.UseVisualStyleBackColor = true;
             this.btnPushResidences.Click += new System.EventHandler(this.btnPushResidences_Click);
-            // 
+            //
             // btnBuildSurface
-            // 
+            //
             this.btnBuildSurface.AutoSize = true;
             this.btnBuildSurface.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-            this.btnBuildSurface.Location = new System.Drawing.Point(290, 3);
+            this.btnBuildSurface.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.btnBuildSurface.Location = new System.Drawing.Point(211, 3);
             this.btnBuildSurface.Name = "btnBuildSurface";
             this.btnBuildSurface.Size = new System.Drawing.Size(124, 35);
             this.btnBuildSurface.TabIndex = 2;
             this.btnBuildSurface.Text = "Build Surface";
             this.btnBuildSurface.UseVisualStyleBackColor = true;
             this.btnBuildSurface.Click += new System.EventHandler(this.btnBuildSurface_Click);
-            // 
+            //
+            // tableQuickButtons
+            //
+            this.tableQuickButtons.AutoSize = true;
+            this.tableQuickButtons.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.tableQuickButtons.ColumnCount = 4;
+            this.tableQuickButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 25F));
+            this.tableQuickButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 25F));
+            this.tableQuickButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 25F));
+            this.tableQuickButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 25F));
+            this.tableQuickButtons.Dock = System.Windows.Forms.DockStyle.Top;
+            this.tableQuickButtons.Location = new System.Drawing.Point(0, 47);
+            this.tableQuickButtons.Margin = new System.Windows.Forms.Padding(0);
+            this.tableQuickButtons.Name = "tableQuickButtons";
+            this.tableQuickButtons.RowCount = 1;
+            this.tableQuickButtons.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            this.tableQuickButtons.Size = new System.Drawing.Size(314, 41);
+            this.tableQuickButtons.TabIndex = 1;
+            //
             // lblStatus
-            // 
+            //
             this.lblStatus.AutoEllipsis = true;
             this.lblStatus.AutoSize = true;
             this.lblStatus.Dock = System.Windows.Forms.DockStyle.Top;
@@ -363,8 +411,12 @@ namespace ResidenceSync.UI
             this.groupSurfDev.ResumeLayout(false);
             this.tableSurfDev.ResumeLayout(false);
             this.tableSurfDev.PerformLayout();
-            this.flowButtons.ResumeLayout(false);
-            this.flowButtons.PerformLayout();
+            this.tableButtons.ResumeLayout(false);
+            this.tableButtons.PerformLayout();
+            this.tablePrimaryButtons.ResumeLayout(false);
+            this.tablePrimaryButtons.PerformLayout();
+            this.tableQuickButtons.ResumeLayout(false);
+            this.tableQuickButtons.PerformLayout();
             this.ResumeLayout(false);
 
         }
@@ -390,7 +442,9 @@ namespace ResidenceSync.UI
         private System.Windows.Forms.ComboBox comboScale;
         private System.Windows.Forms.ComboBox comboSurveyed;
         private System.Windows.Forms.ComboBox comboInsertResidences;
-        private System.Windows.Forms.FlowLayoutPanel flowButtons;
+        private System.Windows.Forms.TableLayoutPanel tableButtons;
+        private System.Windows.Forms.TableLayoutPanel tablePrimaryButtons;
+        private System.Windows.Forms.TableLayoutPanel tableQuickButtons;
         private System.Windows.Forms.Button btnBuildSection;
         private System.Windows.Forms.Button btnPushResidences;
         private System.Windows.Forms.Button btnBuildSurface;
