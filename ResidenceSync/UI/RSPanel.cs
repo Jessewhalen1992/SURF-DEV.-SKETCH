@@ -2,6 +2,7 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Application = Autodesk.AutoCAD.ApplicationServices.Core.Application;
 using ResidenceSync.Properties;
 using System;
+using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -19,6 +20,7 @@ namespace ResidenceSync.UI
             InitializeSurveyedOptions();
             InitializeInsertResidencesOptions();
             LoadUserSettings();
+            InitializeQuickInsertButtons();
         }
 
         private void RSPanel_Load(object sender, EventArgs e)
@@ -43,7 +45,7 @@ namespace ResidenceSync.UI
         }
 
 
-        // RSPanel.cs – prompt user before sending macro
+        // RSPanel.cs â€“ prompt user before sending macro
         private void btnBuildSection_Click(object sender, EventArgs e)
         {
             SaveUserSettings();
@@ -55,14 +57,14 @@ namespace ResidenceSync.UI
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Question);
 
-            // If the user clicks “No”, cancel the operation
+            // If the user clicks â€œNoâ€, cancel the operation
             if (result != DialogResult.Yes)
             {
-                SetStatus("Section build cancelled – not in UTM.");
+                SetStatus("Section build cancelled â€“ not in UTM.");
                 return;
             }
 
-            // User confirmed they’re in UTM – proceed with macro
+            // User confirmed theyâ€™re in UTM â€“ proceed with macro
             var macro = MacroBuilder.BuildBuildSec(
                 GetZoneSelectionValue(),
                 GetTextValue(textSection),
@@ -401,6 +403,110 @@ namespace ResidenceSync.UI
             public string Value { get; }
 
             public override string ToString() => Display;
+        }
+
+        private ContextMenuStrip BuildMacroMenu((string label, string macro)[] macros)
+        {
+            var menu = new ContextMenuStrip();
+            foreach (var (label, macro) in macros)
+            {
+                var item = new ToolStripMenuItem(label);
+                var macroToRun = macro;
+                item.Click += (sender, e) => RunInsertMacro(macroToRun);
+                menu.Items.Add(item);
+            }
+
+            return menu;
+        }
+
+        private void AttachMenu(Button button, ContextMenuStrip menu)
+        {
+            button.Click += (sender, e) => menu.Show(button, new Point(0, button.Height));
+        }
+
+        private void RunInsertMacro(string macro)
+        {
+            SendMacro(macro + "\n");
+        }
+
+        private void InitializeQuickInsertButtons()
+        {
+            const string arrow = " â–¾";
+
+            string BuildInsertMacro(string blockName) =>
+                $"^C^C(progn (command \"-LAYER\" \"S\" \"0\" \"\") (InsertBlock1 \"{blockName}\"))";
+
+            var labelQuickInserts = new Label
+            {
+                Text = "Quick inserts:",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left | AnchorStyles.Top
+            };
+
+            var btnFreeholdRadius = new Button
+            {
+                Name = "btnFreeholdRadius",
+                Text = "Freehold Radius" + arrow,
+                AutoSize = true
+            };
+
+            var freeholdMenu = BuildMacroMenu(new[]
+            {
+                ("Freehold Radius", BuildInsertMacro("blk_surf_dev_freehold"))
+            });
+            AttachMenu(btnFreeholdRadius, freeholdMenu);
+
+            var btnExtentFabric = new Button
+            {
+                Name = "btnExtentFabric",
+                Text = "Extent Fabric" + arrow,
+                AutoSize = true
+            };
+
+            var extentMenu = BuildMacroMenu(new[]
+            {
+                ("50k Surveyed Ext.", BuildInsertMacro("50000_surv_fabric")),
+                ("50k Unsurveyed Ext.", BuildInsertMacro("50000_ut_fabric"))
+            });
+            AttachMenu(btnExtentFabric, extentMenu);
+
+            var btnTownshipFabric = new Button
+            {
+                Name = "btnTownshipFabric",
+                Text = "Township Fabric" + arrow,
+                AutoSize = true
+            };
+
+            var townshipMenu = BuildMacroMenu(new[]
+            {
+                ("50k Surveyed", BuildInsertMacro("fabric_twp50000")),
+                ("20k Surveyed", BuildInsertMacro("fabric_twp20000")),
+                ("25k Surveyed", BuildInsertMacro("fabric_twp25000")),
+                ("30k Surveyed", BuildInsertMacro("fabric_twp30000"))
+            });
+            AttachMenu(btnTownshipFabric, townshipMenu);
+
+            var btnRadiusCircles = new Button
+            {
+                Name = "btnRadiusCircles",
+                Text = "Radius Circles" + arrow,
+                AutoSize = true
+            };
+
+            var radiusMenu = BuildMacroMenu(new[]
+            {
+                ("50k Radius Circle", BuildInsertMacro("blk_50000_rad_circles")),
+                ("20k Radius Circle", BuildInsertMacro("blk_20000_rad_circles")),
+                ("25k Radius Circle", BuildInsertMacro("blk_30000_rad_circles")),
+                ("30k Radius Circle", BuildInsertMacro("blk_40000_rad_circles"))
+            });
+            AttachMenu(btnRadiusCircles, radiusMenu);
+
+            flowButtons.Controls.Add(labelQuickInserts);
+            flowButtons.Controls.Add(btnFreeholdRadius);
+            flowButtons.Controls.Add(btnExtentFabric);
+            flowButtons.Controls.Add(btnTownshipFabric);
+            flowButtons.Controls.Add(btnRadiusCircles);
         }
     }
 }
