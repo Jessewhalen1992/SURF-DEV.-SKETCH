@@ -667,14 +667,56 @@ namespace ResidenceSync
             // 1) Center section
             if (!PromptSectionKey(ed, out SectionKey centerKey)) return;
 
-            // 2) Map scale
-            var pko = new PromptKeywordOptions("\nPick scale [50k/25k/20k]: ") { AllowNone = false };
-            pko.Keywords.Add("50k"); pko.Keywords.Add("25k"); pko.Keywords.Add("20k");
-            var kres = ed.GetKeywords(pko);
-            if (kres.Status != PromptStatus.OK) return;
-            string scaleKey = (kres.StringResult ?? "50k").ToLowerInvariant();
+            // 2) Grid size
+            string gridSizeKey = "5x5";
+            {
+                var gridOpts = new PromptKeywordOptions("\nPick grid size [3x3/5x5/7x7/9x9]: ")
+                {
+                    AllowNone = true,
+                    AllowArbitraryInput = false
+                };
+                gridOpts.Keywords.Add("3x3");
+                gridOpts.Keywords.Add("5x5");
+                gridOpts.Keywords.Add("7x7");
+                gridOpts.Keywords.Add("9x9");
+                gridOpts.Keywords.Default = "5x5";
 
-            // 3) Surveyed vs Unsurveyed → outline layer
+                var gridRes = ed.GetKeywords(gridOpts);
+                if (gridRes.Status == PromptStatus.Cancel) return;
+                if (gridRes.Status == PromptStatus.OK && !string.IsNullOrWhiteSpace(gridRes.StringResult))
+                    gridSizeKey = gridRes.StringResult;
+                else if (gridRes.Status == PromptStatus.None)
+                    gridSizeKey = gridOpts.Keywords.Default ?? "5x5";
+            }
+
+            int gridN = 5;
+            if (!string.IsNullOrWhiteSpace(gridSizeKey))
+            {
+                var p = gridSizeKey.Trim();
+                int x = p.IndexOf('x');
+                string nStr = (x > 0) ? p.Substring(0, x) : p;
+                if (int.TryParse(nStr, out int n) && (n == 3 || n == 5 || n == 7 || n == 9))
+                    gridN = n;
+            }
+
+            // 3) Map scale
+            var pko = new PromptKeywordOptions("\nPick scale [50k/30k/25k/20k]: ")
+            {
+                AllowNone = true,
+                AllowArbitraryInput = false
+            };
+            pko.Keywords.Add("50k");
+            pko.Keywords.Add("30k");
+            pko.Keywords.Add("25k");
+            pko.Keywords.Add("20k");
+            pko.Keywords.Default = "50k";
+            var kres = ed.GetKeywords(pko);
+            if (kres.Status == PromptStatus.Cancel) return;
+            string scaleKey = ((kres.Status == PromptStatus.OK && !string.IsNullOrWhiteSpace(kres.StringResult))
+                ? kres.StringResult
+                : (pko.Keywords.Default ?? "50k")).ToLowerInvariant();
+
+            // 4) Surveyed vs Unsurveyed → outline layer
             var pko2 = new PromptKeywordOptions("\nIs the development Surveyed or Unsurveyed? [Surveyed/Unsurveyed]: ")
             { AllowNone = true };
             pko2.Keywords.Add("Surveyed");
@@ -685,7 +727,7 @@ namespace ResidenceSync
                                string.Equals(kres2.StringResult, "Surveyed", StringComparison.OrdinalIgnoreCase));
             string outlineLayer = isSurveyed ? "L-SEC" : "L-USEC";
 
-            // 4) Insert residences?
+            // 5) Insert residences?
             var pko3 = new PromptKeywordOptions("\nInsert residence objects (blocks/points) from master? [No/Yes]: ")
             { AllowNone = true };
             pko3.Keywords.Add("No");
@@ -695,16 +737,41 @@ namespace ResidenceSync
             bool insertResidences = (kres3.Status == PromptStatus.OK &&
                                      string.Equals(kres3.StringResult, "Yes", StringComparison.OrdinalIgnoreCase));
 
-            // 5) Insertion point — convert PICK (UCS) to WCS **using the INVERSE** of CUCS
+            // 6) Insertion point — convert PICK (UCS) to WCS **using the INVERSE** of CUCS
             var pIns = ed.GetPoint("\nPick insertion point (centre of middle section): ");
             if (pIns.Status != PromptStatus.OK) return;
             Matrix3d ucsToWcs = ed.CurrentUserCoordinateSystem.Inverse(); // ← correct
             Point3d insertCenter = pIns.Value.TransformBy(ucsToWcs);      // UCS → WCS
 
             // Units/scales
-            double unitsPerKm = (scaleKey == "25k") ? 200.0 : (scaleKey == "20k") ? 250.0 : 100.0;
+            double unitsPerKm;
+            double secTextHt;
+            double surfDevLinetypeScale;
+            switch (scaleKey)
+            {
+                case "20k":
+                    unitsPerKm = 250.0;
+                    secTextHt = 37.5;
+                    surfDevLinetypeScale = 0.50;
+                    break;
+                case "25k":
+                    unitsPerKm = 200.0;
+                    secTextHt = 30.0;
+                    surfDevLinetypeScale = 0.50;
+                    break;
+                case "30k":
+                    unitsPerKm = 166.66666666666666; // 100 * (50/30)
+                    secTextHt = 25.0;
+                    surfDevLinetypeScale = 0.50;
+                    break;
+                case "50k":
+                default:
+                    unitsPerKm = 100.0;
+                    secTextHt = 15.0;
+                    surfDevLinetypeScale = 0.25;
+                    break;
+            }
             double unitsPerMetre = unitsPerKm / 1000.0;
-            double secTextHt = (scaleKey == "50k") ? 15.0 : (scaleKey == "25k") ? 30.0 : 37.5;
 
             // Index path
             string idxPath = GetMasterSectionsIndexJsonPath(centerKey.Zone);
@@ -794,10 +861,12 @@ namespace ResidenceSync
                 var sectionPolysMaster = new List<List<Point3d>>();
                 int secCount = 0;
 
-                // ---- 5×5 window around centre: offsets -2..+2 ----
-                for (int dRow = -2; dRow <= 2; dRow++)
+                int half = Math.Max(1, (gridN - 1) / 2);
+
+                // ---- NxN window around centre ----
+                for (int dRow = -half; dRow <= half; dRow++)
                 {
-                    for (int dCol = -2; dCol <= 2; dCol++)
+                    for (int dCol = -half; dCol <= half; dCol++)
                     {
                         SectionKey k2 = NeighborKey(dRow, dCol);
                         if (string.IsNullOrEmpty(k2.Section)) continue;
@@ -819,6 +888,7 @@ namespace ResidenceSync
                         pl.ColorIndex = 253;
                         ms.AppendEntity(pl); tr.AddNewlyCreatedDBObject(pl, true);
                         pl.TransformBy(xform);
+                        pl.LinetypeScale = surfDevLinetypeScale;
 
                         // Quarter-line anchors (master) → entities → transform
                         if (TryGetQuarterAnchorsByEdgeMedianVertexChain(rec.verts,
@@ -830,6 +900,8 @@ namespace ResidenceSync
                             ms.AppendEntity(qh); tr.AddNewlyCreatedDBObject(qh, true);
                             qv.TransformBy(xform);
                             qh.TransformBy(xform);
+                            qv.LinetypeScale = surfDevLinetypeScale;
+                            qh.LinetypeScale = surfDevLinetypeScale;
 
                             // Label at cross center (compute in master, then transform point)
                             Point3d centerM = new Point3d(
@@ -919,7 +991,7 @@ namespace ResidenceSync
 
                 tr.Commit();
 
-                ed.WriteMessage($"\nSURFDEV: Built 5×5 ({secCount} sections){(insertResidences ? $", inserted {inserted} residence object(s) (blocks/points, OD preserved)" : "")}. Outlines/Q-sec color 253; labels on S-7 with mask.");
+                ed.WriteMessage($"\nSURFDEV: Built {gridN}×{gridN} ({secCount} sections){(insertResidences ? $", inserted {inserted} residence object(s) (blocks/points, OD preserved)" : "")}. Outlines/Q-sec color 253; labels on S-7 with mask.");
             }
 
             ed.Regen();
@@ -2003,7 +2075,7 @@ namespace ResidenceSync
                     }
                     else continue;
 
-                    // Inside any of the 5×5 section polygons?
+                    // Inside any of the requested section polygons?
                     foreach (var poly in sectionPolys)
                     {
                         if (PointInPolygon2D(poly, pos.X, pos.Y))

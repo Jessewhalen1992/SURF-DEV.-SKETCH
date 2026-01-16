@@ -263,6 +263,7 @@ namespace ResidenceSync.UI
             comboScale.Items.AddRange(new object[]
             {
                 "50k",
+                "30k",
                 "25k",
                 "20k"
             });
@@ -498,8 +499,8 @@ namespace ResidenceSync.UI
             {
                 ("50k Radius Circle", BuildInsertMacro("blk_50000_rad_circles")),
                 ("20k Radius Circle", BuildInsertMacro("blk_20000_rad_circles")),
-                ("25k Radius Circle", BuildInsertMacro("blk_30000_rad_circles")),
-                ("30k Radius Circle", BuildInsertMacro("blk_40000_rad_circles"))
+                ("25k Radius Circle", BuildInsertMacro("blk_25000_rad_circles")),
+                ("30k Radius Circle", BuildInsertMacro("blk_30000_rad_circles"))
             });
             AttachMenu(btnRadiusCircles, radiusMenu);
 

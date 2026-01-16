@@ -63,7 +63,8 @@ namespace ResidenceSync.UI
             macro = AppendIfPresent(macro, twp);
             macro = AppendIfPresent(macro, rge);
             macro = AppendIfPresent(macro, mer);
-            _ = size; // size is prompted later; keep parameter for compatibility
+            // SURFDEV now prompts for grid size before scale.
+            macro = AppendIfPresent(macro, size);
             macro = AppendIfPresent(macro, scale);
 
             if (isSurveyed.HasValue)

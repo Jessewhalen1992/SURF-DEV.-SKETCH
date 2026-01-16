@@ -50,11 +50,10 @@ namespace ResidenceSync.UI
             this.tableSurfDev.SuspendLayout();
             this.tableButtons.SuspendLayout();
             this.tablePrimaryButtons.SuspendLayout();
-            this.tableQuickButtons.SuspendLayout();
             this.SuspendLayout();
-            //
+            // 
             // tableLayoutMain
-            //
+            // 
             this.tableLayoutMain.ColumnCount = 1;
             this.tableLayoutMain.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tableLayoutMain.Controls.Add(this.groupSurfDev, 0, 0);
@@ -78,7 +77,7 @@ namespace ResidenceSync.UI
             this.groupSurfDev.MinimumSize = new System.Drawing.Size(320, 220);
             this.groupSurfDev.Name = "groupSurfDev";
             this.groupSurfDev.Padding = new System.Windows.Forms.Padding(8, 6, 8, 8);
-            this.groupSurfDev.Size = new System.Drawing.Size(320, 319);
+            this.groupSurfDev.Size = new System.Drawing.Size(320, 333);
             this.groupSurfDev.TabIndex = 0;
             this.groupSurfDev.TabStop = false;
             this.groupSurfDev.Text = "SURFDEV Options";
@@ -108,7 +107,7 @@ namespace ResidenceSync.UI
             this.tableSurfDev.Controls.Add(this.comboInsertResidences, 1, 8);
             this.tableSurfDev.Dock = System.Windows.Forms.DockStyle.Fill;
             this.tableSurfDev.GrowStyle = System.Windows.Forms.TableLayoutPanelGrowStyle.FixedSize;
-            this.tableSurfDev.Location = new System.Drawing.Point(8, 30);
+            this.tableSurfDev.Location = new System.Drawing.Point(8, 22);
             this.tableSurfDev.Name = "tableSurfDev";
             this.tableSurfDev.RowCount = 9;
             this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
@@ -120,176 +119,177 @@ namespace ResidenceSync.UI
             this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
             this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
             this.tableSurfDev.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 11.11111F));
-            this.tableSurfDev.Size = new System.Drawing.Size(304, 281);
+            this.tableSurfDev.Size = new System.Drawing.Size(304, 303);
             this.tableSurfDev.TabIndex = 0;
             this.tableSurfDev.Paint += new System.Windows.Forms.PaintEventHandler(this.tableSurfDev_Paint);
             // 
             // labelZone
-            //
+            // 
             this.labelZone.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelZone.AutoSize = true;
-            this.labelZone.Location = new System.Drawing.Point(3, 5);
+            this.labelZone.Location = new System.Drawing.Point(3, 9);
             this.labelZone.Name = "labelZone";
-            this.labelZone.Size = new System.Drawing.Size(54, 25);
+            this.labelZone.Size = new System.Drawing.Size(34, 15);
             this.labelZone.TabIndex = 0;
             this.labelZone.Text = "Zone";
-            //
+            // 
             // comboZone
-            //
+            // 
             this.comboZone.Dock = System.Windows.Forms.DockStyle.Fill;
             this.comboZone.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.comboZone.FormattingEnabled = true;
             this.comboZone.Location = new System.Drawing.Point(113, 3);
             this.comboZone.Name = "comboZone";
-            this.comboZone.Size = new System.Drawing.Size(188, 33);
+            this.comboZone.Size = new System.Drawing.Size(188, 23);
             this.comboZone.TabIndex = 1;
-            //
+            // 
             // labelSection
-            //
+            // 
             this.labelSection.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelSection.AutoSize = true;
-            this.labelSection.Location = new System.Drawing.Point(3, 36);
+            this.labelSection.Location = new System.Drawing.Point(3, 42);
             this.labelSection.Name = "labelSection";
-            this.labelSection.Size = new System.Drawing.Size(70, 25);
+            this.labelSection.Size = new System.Drawing.Size(46, 15);
             this.labelSection.TabIndex = 2;
             this.labelSection.Text = "Section";
-            //
+            // 
             // textSection
-            //
+            // 
             this.textSection.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textSection.Location = new System.Drawing.Point(113, 34);
+            this.textSection.Location = new System.Drawing.Point(113, 36);
             this.textSection.Name = "textSection";
-            this.textSection.Size = new System.Drawing.Size(188, 31);
+            this.textSection.Size = new System.Drawing.Size(188, 23);
             this.textSection.TabIndex = 3;
-            //
+            // 
             // labelTownship
-            //
+            // 
             this.labelTownship.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelTownship.AutoSize = true;
-            this.labelTownship.Location = new System.Drawing.Point(3, 67);
+            this.labelTownship.Location = new System.Drawing.Point(3, 75);
             this.labelTownship.Name = "labelTownship";
-            this.labelTownship.Size = new System.Drawing.Size(86, 25);
+            this.labelTownship.Size = new System.Drawing.Size(58, 15);
             this.labelTownship.TabIndex = 4;
             this.labelTownship.Text = "Township";
-            //
+            // 
             // textTownship
-            //
+            // 
             this.textTownship.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textTownship.Location = new System.Drawing.Point(113, 65);
+            this.textTownship.Location = new System.Drawing.Point(113, 69);
             this.textTownship.Name = "textTownship";
-            this.textTownship.Size = new System.Drawing.Size(188, 31);
+            this.textTownship.Size = new System.Drawing.Size(188, 23);
             this.textTownship.TabIndex = 5;
-            //
+            // 
             // labelRange
-            //
+            // 
             this.labelRange.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelRange.AutoSize = true;
-            this.labelRange.Location = new System.Drawing.Point(3, 98);
+            this.labelRange.Location = new System.Drawing.Point(3, 108);
             this.labelRange.Name = "labelRange";
-            this.labelRange.Size = new System.Drawing.Size(62, 25);
+            this.labelRange.Size = new System.Drawing.Size(40, 15);
             this.labelRange.TabIndex = 6;
             this.labelRange.Text = "Range";
-            //
+            // 
             // textRange
-            //
+            // 
             this.textRange.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textRange.Location = new System.Drawing.Point(113, 96);
+            this.textRange.Location = new System.Drawing.Point(113, 102);
             this.textRange.Name = "textRange";
-            this.textRange.Size = new System.Drawing.Size(188, 31);
+            this.textRange.Size = new System.Drawing.Size(188, 23);
             this.textRange.TabIndex = 7;
-            //
+            // 
             // labelMeridian
-            //
+            // 
             this.labelMeridian.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelMeridian.AutoSize = true;
-            this.labelMeridian.Location = new System.Drawing.Point(3, 129);
+            this.labelMeridian.Location = new System.Drawing.Point(3, 141);
             this.labelMeridian.Name = "labelMeridian";
-            this.labelMeridian.Size = new System.Drawing.Size(81, 25);
+            this.labelMeridian.Size = new System.Drawing.Size(54, 15);
             this.labelMeridian.TabIndex = 8;
             this.labelMeridian.Text = "Meridian";
-            //
+            // 
             // textMeridian
-            //
+            // 
             this.textMeridian.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.textMeridian.Location = new System.Drawing.Point(113, 127);
+            this.textMeridian.Location = new System.Drawing.Point(113, 135);
             this.textMeridian.Name = "textMeridian";
-            this.textMeridian.Size = new System.Drawing.Size(188, 31);
+            this.textMeridian.Size = new System.Drawing.Size(188, 23);
             this.textMeridian.TabIndex = 9;
-            //
+            // 
             // labelGridSize
-            //
+            // 
             this.labelGridSize.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelGridSize.AutoSize = true;
-            this.labelGridSize.Location = new System.Drawing.Point(3, 160);
+            this.labelGridSize.Location = new System.Drawing.Point(3, 174);
             this.labelGridSize.Name = "labelGridSize";
-            this.labelGridSize.Size = new System.Drawing.Size(79, 25);
+            this.labelGridSize.Size = new System.Drawing.Size(51, 15);
             this.labelGridSize.TabIndex = 10;
             this.labelGridSize.Text = "Grid size";
-            //
+            // 
             // comboGridSize
-            //
+            // 
             this.comboGridSize.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.comboGridSize.Location = new System.Drawing.Point(113, 158);
+            this.comboGridSize.Location = new System.Drawing.Point(113, 168);
             this.comboGridSize.Name = "comboGridSize";
-            this.comboGridSize.Size = new System.Drawing.Size(188, 33);
+            this.comboGridSize.Size = new System.Drawing.Size(188, 23);
             this.comboGridSize.TabIndex = 11;
-            //
+            // 
             // labelScale
-            //
+            // 
             this.labelScale.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelScale.AutoSize = true;
-            this.labelScale.Location = new System.Drawing.Point(3, 191);
+            this.labelScale.Location = new System.Drawing.Point(3, 207);
             this.labelScale.Name = "labelScale";
-            this.labelScale.Size = new System.Drawing.Size(55, 25);
+            this.labelScale.Size = new System.Drawing.Size(34, 15);
             this.labelScale.TabIndex = 12;
             this.labelScale.Text = "Scale";
-            //
+            // 
             // comboScale
-            //
+            // 
             this.comboScale.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.comboScale.Location = new System.Drawing.Point(113, 189);
+            this.comboScale.Location = new System.Drawing.Point(113, 201);
             this.comboScale.Name = "comboScale";
-            this.comboScale.Size = new System.Drawing.Size(188, 33);
+            this.comboScale.Size = new System.Drawing.Size(188, 23);
             this.comboScale.TabIndex = 13;
-            //
+            // 
             // label1
-            //
+            // 
             this.label1.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(3, 222);
+            this.label1.Location = new System.Drawing.Point(3, 240);
             this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(82, 25);
+            this.label1.Size = new System.Drawing.Size(55, 15);
             this.label1.TabIndex = 14;
             this.label1.Text = "Surveyed";
             this.label1.Click += new System.EventHandler(this.labelSurveyed_Click);
-            //
+            // 
             // comboSurveyed
-            //
+            // 
             this.comboSurveyed.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.comboSurveyed.Location = new System.Drawing.Point(113, 220);
+            this.comboSurveyed.Location = new System.Drawing.Point(113, 234);
             this.comboSurveyed.Name = "comboSurveyed";
-            this.comboSurveyed.Size = new System.Drawing.Size(188, 33);
+            this.comboSurveyed.Size = new System.Drawing.Size(188, 23);
             this.comboSurveyed.TabIndex = 15;
-            //
+            // 
             // labelInsertRes
-            //
+            // 
             this.labelInsertRes.Anchor = System.Windows.Forms.AnchorStyles.Left;
             this.labelInsertRes.AutoSize = true;
-            this.labelInsertRes.Location = new System.Drawing.Point(3, 253);
+            this.labelInsertRes.Location = new System.Drawing.Point(3, 276);
             this.labelInsertRes.Name = "labelInsertRes";
-            this.labelInsertRes.Size = new System.Drawing.Size(147, 25);
+            this.labelInsertRes.Size = new System.Drawing.Size(97, 15);
             this.labelInsertRes.TabIndex = 16;
             this.labelInsertRes.Text = "Insert Residences";
-            //
+            // 
             // comboInsertResidences
-            //
+            // 
             this.comboInsertResidences.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.comboInsertResidences.Location = new System.Drawing.Point(113, 251);
+            this.comboInsertResidences.Location = new System.Drawing.Point(113, 267);
             this.comboInsertResidences.Name = "comboInsertResidences";
-            this.comboInsertResidences.Size = new System.Drawing.Size(188, 33);
+            this.comboInsertResidences.Size = new System.Drawing.Size(188, 23);
             this.comboInsertResidences.TabIndex = 17;
+            // 
             // tableButtons
-            //
+            // 
             this.tableButtons.AutoSize = true;
             this.tableButtons.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.tableButtons.ColumnCount = 1;
@@ -297,17 +297,17 @@ namespace ResidenceSync.UI
             this.tableButtons.Controls.Add(this.tablePrimaryButtons, 0, 0);
             this.tableButtons.Controls.Add(this.tableQuickButtons, 0, 1);
             this.tableButtons.Dock = System.Windows.Forms.DockStyle.Top;
-            this.tableButtons.Location = new System.Drawing.Point(3, 328);
+            this.tableButtons.Location = new System.Drawing.Point(3, 342);
             this.tableButtons.Margin = new System.Windows.Forms.Padding(3, 3, 3, 0);
             this.tableButtons.Name = "tableButtons";
             this.tableButtons.RowCount = 2;
             this.tableButtons.RowStyles.Add(new System.Windows.Forms.RowStyle());
             this.tableButtons.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            this.tableButtons.Size = new System.Drawing.Size(314, 88);
+            this.tableButtons.Size = new System.Drawing.Size(314, 37);
             this.tableButtons.TabIndex = 1;
-            //
+            // 
             // tablePrimaryButtons
-            //
+            // 
             this.tablePrimaryButtons.AutoSize = true;
             this.tablePrimaryButtons.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.tablePrimaryButtons.ColumnCount = 3;
@@ -323,50 +323,50 @@ namespace ResidenceSync.UI
             this.tablePrimaryButtons.Name = "tablePrimaryButtons";
             this.tablePrimaryButtons.RowCount = 1;
             this.tablePrimaryButtons.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            this.tablePrimaryButtons.Size = new System.Drawing.Size(314, 41);
+            this.tablePrimaryButtons.Size = new System.Drawing.Size(314, 31);
             this.tablePrimaryButtons.TabIndex = 0;
-            //
+            // 
             // btnBuildSection
-            //
+            // 
             this.btnBuildSection.AutoSize = true;
             this.btnBuildSection.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.btnBuildSection.Dock = System.Windows.Forms.DockStyle.Fill;
             this.btnBuildSection.Location = new System.Drawing.Point(3, 3);
             this.btnBuildSection.Name = "btnBuildSection";
-            this.btnBuildSection.Size = new System.Drawing.Size(124, 35);
+            this.btnBuildSection.Size = new System.Drawing.Size(98, 25);
             this.btnBuildSection.TabIndex = 0;
             this.btnBuildSection.Text = "Build Section";
             this.btnBuildSection.UseVisualStyleBackColor = true;
             this.btnBuildSection.Click += new System.EventHandler(this.btnBuildSection_Click);
-            //
+            // 
             // btnPushResidences
-            //
+            // 
             this.btnPushResidences.AutoSize = true;
             this.btnPushResidences.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.btnPushResidences.Dock = System.Windows.Forms.DockStyle.Fill;
             this.btnPushResidences.Location = new System.Drawing.Point(107, 3);
             this.btnPushResidences.Name = "btnPushResidences";
-            this.btnPushResidences.Size = new System.Drawing.Size(98, 35);
+            this.btnPushResidences.Size = new System.Drawing.Size(98, 25);
             this.btnPushResidences.TabIndex = 1;
             this.btnPushResidences.Text = "Push Residences";
             this.btnPushResidences.UseVisualStyleBackColor = true;
             this.btnPushResidences.Click += new System.EventHandler(this.btnPushResidences_Click);
-            //
+            // 
             // btnBuildSurface
-            //
+            // 
             this.btnBuildSurface.AutoSize = true;
             this.btnBuildSurface.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.btnBuildSurface.Dock = System.Windows.Forms.DockStyle.Fill;
             this.btnBuildSurface.Location = new System.Drawing.Point(211, 3);
             this.btnBuildSurface.Name = "btnBuildSurface";
-            this.btnBuildSurface.Size = new System.Drawing.Size(124, 35);
+            this.btnBuildSurface.Size = new System.Drawing.Size(100, 25);
             this.btnBuildSurface.TabIndex = 2;
             this.btnBuildSurface.Text = "Build Surface";
             this.btnBuildSurface.UseVisualStyleBackColor = true;
             this.btnBuildSurface.Click += new System.EventHandler(this.btnBuildSurface_Click);
-            //
+            // 
             // tableQuickButtons
-            //
+            // 
             this.tableQuickButtons.AutoSize = true;
             this.tableQuickButtons.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
             this.tableQuickButtons.ColumnCount = 4;
@@ -375,30 +375,30 @@ namespace ResidenceSync.UI
             this.tableQuickButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 25F));
             this.tableQuickButtons.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 25F));
             this.tableQuickButtons.Dock = System.Windows.Forms.DockStyle.Top;
-            this.tableQuickButtons.Location = new System.Drawing.Point(0, 47);
+            this.tableQuickButtons.Location = new System.Drawing.Point(0, 37);
             this.tableQuickButtons.Margin = new System.Windows.Forms.Padding(0);
             this.tableQuickButtons.Name = "tableQuickButtons";
             this.tableQuickButtons.RowCount = 1;
             this.tableQuickButtons.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            this.tableQuickButtons.Size = new System.Drawing.Size(314, 41);
+            this.tableQuickButtons.Size = new System.Drawing.Size(314, 0);
             this.tableQuickButtons.TabIndex = 1;
-            //
+            // 
             // lblStatus
-            //
+            // 
             this.lblStatus.AutoEllipsis = true;
             this.lblStatus.AutoSize = true;
             this.lblStatus.Dock = System.Windows.Forms.DockStyle.Top;
-            this.lblStatus.Location = new System.Drawing.Point(3, 372);
+            this.lblStatus.Location = new System.Drawing.Point(3, 382);
             this.lblStatus.Margin = new System.Windows.Forms.Padding(3);
             this.lblStatus.Name = "lblStatus";
-            this.lblStatus.Size = new System.Drawing.Size(314, 25);
+            this.lblStatus.Size = new System.Drawing.Size(314, 15);
             this.lblStatus.TabIndex = 2;
             this.lblStatus.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             this.lblStatus.Visible = false;
             // 
             // RSPanel
             // 
-            this.AutoScaleDimensions = new System.Drawing.SizeF(10F, 25F);
+            this.AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.Controls.Add(this.tableLayoutMain);
             this.Font = new System.Drawing.Font("Segoe UI", 9F);
@@ -415,8 +415,6 @@ namespace ResidenceSync.UI
             this.tableButtons.PerformLayout();
             this.tablePrimaryButtons.ResumeLayout(false);
             this.tablePrimaryButtons.PerformLayout();
-            this.tableQuickButtons.ResumeLayout(false);
-            this.tableQuickButtons.PerformLayout();
             this.ResumeLayout(false);
 
         }
